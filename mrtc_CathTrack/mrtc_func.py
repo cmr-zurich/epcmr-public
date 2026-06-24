@@ -30,12 +30,12 @@ request_token = 5685        # random number for starting the request tokes which
 #======================================================
 
 # PFLH 1.5T
-#remote_ip_address = "192.168.113.107"
-#my_ip_address = "192.168.113.108"
+remote_ip_address = "192.168.113.107"
+my_ip_address = "192.168.113.108"
 
 # Herzzentrum Leipzig
-remote_ip_address = "10.186.47.41"
-my_ip_address = "10.186.47.66"
+#remote_ip_address = "10.186.47.41"
+#my_ip_address = "10.186.47.66"
 
 # Demo Best
 #remote_ip_address = "130.144.173.74"

@@ -16,7 +16,7 @@
 #            Leonard Euler (simplified calculation of transformation matrices)                                      #
 #####################################################################################################################
 
-from time import time, sleep, process_time
+from time import time, sleep
 from datetime import datetime
 import numpy as np
 import matplotlib.pyplot as plt
@@ -126,8 +126,8 @@ udp_ip = "127.0.0.1"  # Currently localhost
 # ==================================================================================
 # Replay data from pickle file? If empty, normal MRTC communcation will be started.
 # ==================================================================================
-replayPickleFile = ""
-#replayPickleFile = r"/home/christian-stehning/MRDATA/2026_06_07_jerking_caths/tracking_data_2026-06-04_14-58-27.pkl"
+#replayPickleFile = ""
+replayPickleFile = r"/home/christian-stehning/MRDATA/2026_06_18_MRTC_invivo/tracking_data_2026-06-18_14-20-40_christian.pkl"
 
 
 # ================================================
@@ -372,9 +372,9 @@ def send_catheter(timestamp, catheter_id, proximal_xyz, distal_xyz, sock, udp_ip
 # or the last known, position is far away for other reasons, avaraging would hallucinate
 # an artificial catheter trajectory to the current position.
 #=========================================================================================
-def smart_averaging_weighted_mean(cath, shot, shotList, numAverages, maxAveragingDistance):
+def tip_pos_ori(cath, shot, shotList, numAverages, maxAveragingDistance):
     if shot[cath]["valid"]:
-
+        validPositionSeen[cath] = True
         avgCoilPositionXYZ = {}
         for coil in coils:
             # Init (list)
@@ -397,8 +397,16 @@ def smart_averaging_weighted_mean(cath, shot, shotList, numAverages, maxAveragin
         coilDistance = np.linalg.norm(avgDirVector)
         if coilDistance != 0:
             avgDirVector /= coilDistance
-
-    return (avgCenterPos, avgDirVector)
+            
+        avgTipPos = avgCenterPos + (0.5 * distanceBetweenCoils + distanceBetweenTipAndNearestCoil) * avgDirVector     
+        lastGoodAvgTipPos[cath] = avgTipPos
+        lastGoodAvgDirVector[cath] = avgDirVector
+        
+    else:
+        avgTipPos = lastGoodAvgTipPos[cath]
+        avgDirVector = lastGoodAvgDirVector[cath]
+            
+    return (avgTipPos, avgDirVector)
 
 
 # ====================================================================================================
@@ -588,18 +596,8 @@ def tracking_data_to_slicer(message, images, scan_names, shotList):
                 # As per discussion on Jun 1, 2026, we will send the tip position (i.s.o. center between coils) to Slicer
                 # ===================================================================================================================
 
-                if trackingShotDict[cath]["valid"]:                    
-                    validPositionSeen[cath] = True
-                    [avgCenterPos, avgDirVector] = smart_averaging_weighted_mean(cath, trackingShotDict, shotList, numAverages, maxAveragingDistance)
-                    avgTipPos = avgCenterPos + (0.5 * distanceBetweenCoils + distanceBetweenTipAndNearestCoil) * avgDirVector                                    
-                    lastGoodAvgTipPos[cath] = avgTipPos
-                    lastGoodAvgDirVector[cath] = avgDirVector
+                [avgTipPos, avgDirVector] = tip_pos_ori(cath, trackingShotDict, shotList, numAverages, maxAveragingDistance)                                                    
 
-                else:  
-                    avgTipPos = lastGoodAvgTipPos[cath]
-                    avgDirVector = lastGoodAvgDirVector[cath]
-                    
-                    
                 # =======================================================
                 # Send current transformation to Slicer and/or HoloLens
                 # =======================================================
@@ -673,60 +671,16 @@ if replayPickleFile:
         # and simulated current shot (last element in array)
         for cath in caths:
             curShot = shotList[shotIdx]
-            # Christian Test
-            curShot[cath]["timestamp"] = datetime.now()
-            if curShot[cath]["valid"]:
-                validPositionSeen[cath] = True
-                
-                [avgCenterPos, avgDirVector] = smart_averaging_weighted_mean(cath, curShot, shotList[0:shotIdx], numAverages, maxAveragingDistance)
-                avgTipPos = avgCenterPos + (0.5 * distanceBetweenCoils + distanceBetweenTipAndNearestCoil) * avgDirVector
-                
-                lastGoodAvgTipPos[cath] = avgTipPos
-                lastGoodAvgDirVector[cath] = avgDirVector
-                
-                
-            else:
-                avgTipPos = lastGoodAvgTipPos[cath]
-                avgDirVector = lastGoodAvgDirVector[cath]
-
+            [avgTipPos, avgDirVector] = tip_pos_ori(cath, curShot, shotList[0:shotIdx], numAverages, maxAveragingDistance)   
             # =======================================================
             # Send current transformation to Slicer and/or HoloLens
             # =======================================================
             if sendToSlicer and validPositionSeen[cath]:
                 transform_message = pyigtl.TransformMessage(pos_to_matrix(avgTipPos, avgDirVector), device_name=cath + "_TF", timestamp=time())
-                
                 transform_message.header_version = 2
                 transform_message.metadata = {"valid": str(curShot[cath]["valid"]), "tipPos": str(avgTipPos.tolist())}                
-                #print(transform_message)
                 server.send_message(transform_message)
                 sleep(0.05)
-
-
-
-    # THIS PREVENTS THE 10054 ERROR UPON RE-RUN
-    # ConnectionResetError [WinError 10054] occurs because the old network
-    # socket from the previous script execution is still hanging open in the
-    # operating system
-    
-    if "server" in locals() and server is not None:
-        import threading
-        print("Safely shutting down pyigtl connections...")
-        # WinError 10038: Occurs because the main thread destroys the network
-        # socket while a background thread is still actively polling it for data.
-        # Override the thread exception handler to ignore the WinError 10038 noise
-        def silent_thread_excepthook(args):
-            if "10038" in str(args.exc_value) or "socket" in str(args.exc_type):
-                return  # Ignore this specific shutdown race condition quietly
-            threading.__excepthook__(args)  # Pass any real errors through
-
-        threading.excepthook = silent_thread_excepthook
-
-        # Stop the server safely
-        server.stop()
-
-        # Give Windows a moment to release port 18944
-        sleep(0.1)
-
 
 else:
     # ===================================================
@@ -863,3 +817,26 @@ else:
     pickle.dump(shotList, f)
     f.close()
     print(f"Tracking data were saved to {file}")
+    
+# =================================
+# Close server (if needed)
+#==================================
+    
+if "server" in locals() and server is not None:
+    import threading
+    print("Safely shutting down pyigtl connections...")
+    # WinError 10038: Occurs because the main thread destroys the network
+    # socket while a background thread is still actively polling it for data.
+    # Override the thread exception handler to ignore the WinError 10038 noise
+    def silent_thread_excepthook(args):
+        if "10038" in str(args.exc_value) or "socket" in str(args.exc_type):
+            return  # Ignore this specific shutdown race condition quietly
+        threading.__excepthook__(args)  # Pass any real errors through
+
+    threading.excepthook = silent_thread_excepthook
+
+    # Stop the server safely
+    server.stop()
+
+    # Give Windows a moment to release port 18944
+    sleep(0.1)
