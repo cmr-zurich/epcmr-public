@@ -40,6 +40,14 @@ MR scanner ──(MRTC protocol)──▶  mrtc_CathTrack  ──(OpenIGTLink / 
                                   bridge & tracker                            visualization
 ```
 
+<div align="center">
+
+![EPCMR data bridge](docs/images/databridge.png)
+
+*Data bridge: MR-tracking stream → `mrtc_CathTrack` → OpenIGTLink → EPCMR in 3D Slicer.*
+
+</div>
+
 - **`mrtc_CathTrack/`** — a standalone bridge that speaks the vendor MR-tracking
   protocol (MRTC, via protobuf) and re-publishes catheter transforms as an OpenIGTLink
   server on port `18944`.
@@ -51,6 +59,7 @@ MR scanner ──(MRTC protocol)──▶  mrtc_CathTrack  ──(OpenIGTLink / 
 ## Requirements
 
 - **3D Slicer** 5.7 or newer (Python 3.12 environment).
+- **SlicerOpenIGTLink Extension installes (Extension Manager)
 - **`pyigtl`** — auto-installed into Slicer's Python on first launch (the module prompts
   and installs via `pip` if missing).
 - For the `mrtc_CathTrack` bridge (standalone Python): `protobuf`, `crc32c`.
@@ -119,8 +128,7 @@ Extended documentation lives in [`docs/`](docs/) (images under `docs/images/`).
 A joint engineering & development effort of:
 
 - **Heart Center Leipzig** (Leipzig, Germany) — Ingo Paetsch, Cosima Jahnke
-- **Philips Research** (Eindhoven, NL / Hamburg, DE) — Christian Stehning, Sascha Krueger,
-  Steffen Weiss, Jouke Smink
+- **Philips Research** (Eindhoven, NL / Hamburg, DE) — Christian Stehning, Sascha Krueger, Steffen Weiss, Jouke Smink
 - **ETH Zurich** (Zurich, Switzerland) — Sandra Haltmeier, Max Fuetterer, Sebastian Kozerke
 
 ---
