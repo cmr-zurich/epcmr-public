@@ -1,1 +1,25 @@
+# macOS / OS cruft
 **/.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.ruff_cache/
+
+# Editor / IDE backups
+*~
+*.pyi~
+.idea/
+.vscode/
+
+# Build output
+build/
+dist/
+_build/
+
+# NOTE: ExampleData/ (incl. .nrrd, .pkl, .stl, .jsonl) is intentionally
+# committed so the demo/replay workflow works out of the box.

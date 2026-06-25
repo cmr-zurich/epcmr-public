@@ -2,9 +2,9 @@
 # Extension metadata
 #-----------------------------------------------------------------------------
 set(EXTENSION_NAME EPCMR)
-set(EXTENSION_HOMEPAGE "https://example.com")
+set(EXTENSION_HOMEPAGE "https://github.com/cmr-zurich/epcmr")
 set(EXTENSION_CATEGORY "Cardiac")
-set(EXTENSION_CONTRIBUTORS "Ingo")
+set(EXTENSION_CONTRIBUTORS "Ingo Paetsch (Heart Center Leipzig), Max Fuetterer (ETH Zurich)")
 set(EXTENSION_DESCRIPTION "Multi-procedure EP-CMR suite for RA Flutter and PVC Ablation.")
 set(EXTENSION_ICON "Resources/Icons/EPCMR.png")
 set(EXTENSION_SCREENSHOT "")
@@ -26,7 +26,7 @@ set(MODULE_PYTHON_SCRIPTS
 #-----------------------------------------------------------------------------
 set(MODULE_PYTHON_RESOURCES
   Resources/Icons/EPCMR.png
-  Resources/UI/EPCMR.ui
+  Resources/UI/RAFlutter.ui
 )
 
 #-----------------------------------------------------------------------------

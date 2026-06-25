@@ -5,7 +5,7 @@
 extension_name=EPCMR
 extension_title=EPCMR
 extension_category=Cardiac
-extension_contributors=Ingo Paetsch
+extension_contributors=Ingo Paetsch (Heart Center Leipzig), Christian Stehning (Philips Research), CMR Zurich (ETH Zurich)
 extension_description=Multi-procedure EP-CMR suite for RA Flutter and PVC Ablation.
 extension_icon=EPCMR.png
 extension_screenshot=
@@ -27,4 +27,4 @@ depends=
 # Homepage (optional)
 #-----------------------------------------------------------------------------
 
-homepage=https://example.com
+homepage=https://github.com/cmr-zurich/epcmr
