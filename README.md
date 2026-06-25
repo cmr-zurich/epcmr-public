@@ -59,7 +59,7 @@ MR scanner ──(MRTC protocol)──▶  mrtc_CathTrack  ──(OpenIGTLink / 
 ## Requirements
 
 - **3D Slicer** 5.7 or newer (Python 3.12 environment).
-- **SlicerOpenIGTLink** Extension installes (Extension Manager)
+- **SlicerOpenIGTLink** Extension installed (Extension Manager)
 - **`pyigtl`** — auto-installed into Slicer's Python on first launch (the module prompts
   and installs via `pip` if missing).
 - For the `mrtc_CathTrack` bridge (standalone Python): `protobuf`, `crc32c`.
