@@ -1,0 +1,30 @@
+#-----------------------------------------------------------------------------
+# Extension metadata
+#-----------------------------------------------------------------------------
+
+extension_name=EPCMR
+extension_title=EPCMR
+extension_category=Cardiac
+extension_contributors=Ingo Paetsch
+extension_description=Multi-procedure EP-CMR suite for RA Flutter and PVC Ablation.
+extension_icon=EPCMR.png
+extension_screenshot=
+extension_enabled=1
+
+#-----------------------------------------------------------------------------
+# Module list
+#-----------------------------------------------------------------------------
+
+scripted_loadable_modules=EPCMR
+
+#-----------------------------------------------------------------------------
+# Dependencies (none)
+#-----------------------------------------------------------------------------
+
+depends=
+
+#-----------------------------------------------------------------------------
+# Homepage (optional)
+#-----------------------------------------------------------------------------
+
+homepage=https://example.com

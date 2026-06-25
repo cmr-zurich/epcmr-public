@@ -1,0 +1,53 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+# CRITICAL: Tell Ruff where the source code starts so it can resolve EPCMRLib
+src = ["."]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "N"]
+ignore = [
+    "W505", # Flags comments that exceed the maximum line length
+    "E501", # Line too long (handled by formatter)
+    "E401", # Multiple imports on one line
+    "F401", # Unused import
+    "F403", # 'from module import *'
+    "F405", # 'name' may be undefined from star imports
+    "I001", # Import sorting (isort)
+    "N802", # Function name should be lowercase
+    "N803", # Argument name should be lowercase (allows invalidTint)
+    "N806", # Variable in function should be lowercase
+    "N815", # MixedCase variable in class scope
+    "N816", # Global variable should not be mixedCase
+    "N999", # Invalid module name (allows EPCMRLib to pass)
+]
+
+[tool.ruff.lint.isort]
+# Ensure Ruff treats EPCMRLib as a first-party (local) import
+known-first-party = ["EPCMRLib"]
+
+[tool.ruff.lint.flake8-builtins]
+builtins-allowed-modules = [
+    "slicer",
+    "vtk",
+    "qt",
+    "ctk",
+    "MRML",
+    "vcl",
+    "logging",
+    "np",
+    "sitk",
+    "SimpleITK"
+]
+
+[tool.ruff.lint.pep8-naming]
+# Prevent flagging CamelCase module aliases like 'sitk'
+ignore-names = ["sitk", "np"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401", "E402"]
+"**/Testing/*" = ["S101", "T201"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

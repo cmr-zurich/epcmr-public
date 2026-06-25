@@ -1,0 +1,9 @@
+# typings/ctk/__init__.pyi
+from typing import Any
+
+class ctkCollapsibleButton(Any):
+    def __init__(self, *args, **kwargs): ...
+
+# Add other common Slicer-CTK classes here as needed
+class ctkDirectoryButton(Any): ...
+class ctkPathLineEdit(Any): ...
