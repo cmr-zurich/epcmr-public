@@ -45,7 +45,7 @@ class CatheterReplayerUI(qt.QWidget):
 
         # 2. File Selection
         file_layout = qt.QHBoxLayout()
-        self.open_button = qt.QPushButton("? Open .jsonl File")
+        self.open_button = qt.QPushButton("📂 Open .jsonl File")
         self.open_button.clicked.connect(self.replayer.on_open_file)
         self.file_label = qt.QLabel("No file selected")
         self.file_label.setStyleSheet("font-style: italic; color: #888888;")
@@ -100,20 +100,49 @@ class CatheterReplayerUI(qt.QWidget):
 
         # 6. Playback Controls
         btn_layout = qt.QHBoxLayout()
+
         self.btn_first = qt.QPushButton("<<")
         self.btn_prev = qt.QPushButton("<")
+
         self.btn_rev = qt.QPushButton("Play Rev")
         self.btn_rev.setCheckable(True)
+
         self.btn_play_stop = qt.QPushButton("Play Fwd")
         self.btn_play_stop.setCheckable(True)
-        self.btn_play_stop.setStyleSheet("font-weight: bold; background-color: #e1f5fe;")
+
+        # --- Prevent layout jumping by fixing button sizes ---
+        for b in (self.btn_rev, self.btn_play_stop):
+            b.setMinimumWidth(90)
+            b.setMaximumWidth(90)
+            b.setMinimumHeight(32)
+            b.setMaximumHeight(32)
+
+        # --- Unified styling for both Play buttons ---
+        play_button_style = """
+            QPushButton {
+                font-weight: bold;
+                background-color: #e1f5fe;
+                border: 1px solid #8ac7e6;
+                border-radius: 4px;
+                padding: 4px 10px;
+            }
+            QPushButton:hover {
+                background-color: #f0faff;
+            }
+            QPushButton:pressed {
+                background-color: #d7f0fb;
+            }
+        """
+
+        self.btn_rev.setStyleSheet(play_button_style)
+        self.btn_play_stop.setStyleSheet(play_button_style)
+
         self.btn_next = qt.QPushButton(">")
         self.btn_last = qt.QPushButton(">>")
 
+        # Connections
         self.btn_first.clicked.connect(lambda: self.replayer.jump_to_frame(0))
-        self.btn_last.clicked.connect(
-            lambda: self.replayer.jump_to_frame(max(0, len(self.replayer.matrix_history) - 1))
-        )
+        self.btn_last.clicked.connect(lambda: self.replayer.jump_to_frame(max(0, len(self.replayer.matrix_history) - 1)))
         self.btn_prev.clicked.connect(lambda: self.replayer.jump_to_frame(self.replayer.current_idx - 1))
         self.btn_next.clicked.connect(lambda: self.replayer.jump_to_frame(self.replayer.current_idx + 1))
 
@@ -136,11 +165,13 @@ class CatheterReplayerUI(qt.QWidget):
         layout.addLayout(btn_layout)
 
     def closeEvent(self, event: qt.QCloseEvent) -> None:
-        if self.replayer:
-            self.replayer.cleanup()
+        # Prevent destruction — only hide the window
+        event.ignore()
+        self.hide()
+
+        # Notify logic/UI that the window is now hidden
         if self.on_closed_callback:
             self.on_closed_callback()
-        event.accept()
 
 
 class CatheterReplayer:
@@ -296,9 +327,65 @@ class CatheterReplayer:
 
         self._nodesInitialized = True
 
-    # ------------------------------------------------------------------
-    # Mode switching (LIVE / REPLAY)
-    # ------------------------------------------------------------------
+    def _apply_active_playback_styles(self) -> None:
+        """
+        Apply clear visual styling for active playback direction.
+        Green = forward active
+        Red   = reverse active
+        Blue  = idle (default)
+        """
+        if not self.ui:
+            return
+
+        idle = (
+            "QPushButton { "
+            "font-weight: bold; "
+            "background-color: #e1f5fe; "
+            "color: black; "
+            "border: 1px solid #8ac7e6; "
+            "border-radius: 4px; "
+            "padding: 4px 10px; "
+            "}"
+        )
+
+        active_fwd = (
+            "QPushButton { "
+            "font-weight: bold; "
+            "background-color: #c8e6c9; "
+            "color: #1b5e20; "
+            "border: 2px solid #1b5e20; "
+            "border-radius: 4px; "
+            "padding: 4px 10px; "
+            "}"
+        )
+
+        active_rev = (
+            "QPushButton { "
+            "font-weight: bold; "
+            "background-color: #ffcdd2; "
+            "color: #b71c1c; "
+            "border: 2px solid #b71c1c; "
+            "border-radius: 4px; "
+            "padding: 4px 10px; "
+            "}"
+        )
+
+        # Forward active
+        if self.ui.btn_play_stop.isChecked():
+            self.ui.btn_play_stop.setStyleSheet(active_fwd)
+            self.ui.btn_rev.setStyleSheet(idle)
+            return
+
+        # Reverse active
+        if self.ui.btn_rev.isChecked():
+            self.ui.btn_rev.setStyleSheet(active_rev)
+            self.ui.btn_play_stop.setStyleSheet(idle)
+            return
+
+        # Idle
+        self.ui.btn_play_stop.setStyleSheet(idle)
+        self.ui.btn_rev.setStyleSheet(idle)
+
     def set_mode_replay(self, replay_active: bool) -> None:
         """
         Switch between LIVE and REPLAY modes.
@@ -321,26 +408,39 @@ class CatheterReplayer:
         self.pNode.replayerActive = bool(replay_active)
 
         if self.ui:
+            # Reset playback buttons to a neutral, stopped state
             self.timer.stop()
             self.ui.btn_play_stop.setChecked(False)
             self.ui.btn_play_stop.setText("Play Fwd")
             self.ui.btn_rev.setChecked(False)
             self.ui.btn_rev.setText("Play Rev")
 
-            fwd_idle = "QPushButton { font-weight: bold; background-color: #e1f5fe; color: black; }"
-            rev_idle = "QPushButton { font-weight: normal; color: black; }"
-            self.ui.btn_rev.setStyleSheet(rev_idle)
-
+            # Do NOT override the base styling defined in CatheterReplayerUI;
+            # only adjust enabled/disabled state and (optionally) a shared dim style.
             for child in self.ui.findChildren(qt.QWidget):
                 if child != self.ui.mode_button:
                     child.setEnabled(replay_active)
 
+            # Optional: when not in replay, dim BOTH buttons identically (keeps look & feel in sync)
             if replay_active:
-                self.ui.btn_play_stop.setStyleSheet(fwd_idle)
+                # Keep whatever unified style CatheterReplayerUI applied
+                pass
             else:
-                self.ui.btn_play_stop.setStyleSheet(
-                    "QPushButton { font-weight: bold; background-color: #e1f5fe; color: gray; }"
+                dim_style = (
+                    "QPushButton { "
+                    "font-weight: bold; "
+                    "background-color: #e1f5fe; "
+                    "color: gray; "
+                    "border: 1px solid #8ac7e6; "
+                    "border-radius: 4px; "
+                    "padding: 4px 10px; "
+                    "}"
                 )
+                self.ui.btn_play_stop.setStyleSheet(dim_style)
+                self.ui.btn_rev.setStyleSheet(dim_style)
+
+            # Ensure active/inactive colors are correct after mode switch
+            self._apply_active_playback_styles()
 
         mw = slicer.util.mainWindow()
         if mw:
@@ -630,9 +730,7 @@ class CatheterReplayer:
             self.jump_to_frame(0)
             self.update_timer_speed()
 
-            logging.info(
-                f"CatheterReplayer: Loaded {total_frames} bundles, native interval ? {self.native_interval_ms} ms"
-            )
+            logging.info(f"CatheterReplayer: Loaded {total_frames} bundles, native interval ≈ {self.native_interval_ms} ms")
 
         except Exception as e:
             logging.error(f"CatheterReplayer: Failed to load file: {e}")
@@ -822,6 +920,9 @@ class CatheterReplayer:
             else:
                 self.stop_playback()
                 self.ui.btn_rev.setText("Play Rev")
+
+        # Apply green/red/idle styles after state change
+        self._apply_active_playback_styles()
 
     def start_playback(self) -> None:
         if not self.matrix_history:

@@ -52,6 +52,22 @@ class FreeAngulatorWidget(qt.QWidget):
       - After user moves it: remember position for the rest of the session
       - Across sessions: restore from QSettings
       - No forced repositioning in showEvent
+
+    IMPORTANT:
+      This version is deliberately **non-invasive** with respect to Slicer's
+      internal slice pipeline and Thick Slab reconstruction:
+
+        - NO observers on slice/composite/display nodes
+        - NO renderRequested hooks
+        - NO slab-mode checks or overrides
+
+      It only:
+        - enables slice intersections at startup
+        - sets medium line thickness at startup
+        - sets medium line thickness for the active slice when free angulation
+          is enabled
+
+      Thick Slab reconstruction is therefore left entirely to Slicer.
     """
 
     # ------------------------------------------------------------------
@@ -63,11 +79,29 @@ class FreeAngulatorWidget(qt.QWidget):
         super().__init__(parent)
 
         self.setWindowTitle("Free Angulator")
-        self.setWindowFlags(qt.Qt.Window | qt.Qt.WindowStaysOnTopHint)
+        # Disable maximize button (keep close + optional minimize)
+        self.setWindowFlags(qt.Qt.Window | qt.Qt.WindowStaysOnTopHint | qt.Qt.CustomizeWindowHint | qt.Qt.WindowCloseButtonHint)
+
         self.setMinimumWidth(420)
 
         self.logic = FreeAngulatorLogic()
         self.buildUI()
+
+        # ---------------------------------------------------------
+        # Lock window size ONCE after UI is built
+        # NOTE:
+        #   - sizeHint is a QSize property in this Slicer/PythonQt build
+        #   - We widen the window BEFORE locking the size
+        # ---------------------------------------------------------
+        self.adjustSize()
+        hint = self.sizeHint  # QSize property
+
+        # Double the width (or adjust as needed; we use 1.6)
+        w = int(hint.width() * 1.6)
+        h = hint.height()
+
+        # Apply widened fixed size
+        self.setFixedSize(w, h)
 
         # ---------------------------------------------------------
         # Restore last window position OR place on the LEFT side
@@ -80,18 +114,15 @@ class FreeAngulatorWidget(qt.QWidget):
         elif isinstance(pos, (list, tuple)) and len(pos) == 2:
             self.move(int(pos[0]), int(pos[1]))
         else:
-            # FIRST TIME EVER ? place at 40 px left
+            # FIRST TIME EVER → place at 40 px left
             self._applyLeftSidePlacement()
 
     # ------------------------------------------------------------------
-    # showEvent - DO NOT reposition here
+    # showEvent REMOVED
     # ------------------------------------------------------------------
-    def showEvent(self, event):
-        """
-        DO NOT reposition here.
-        Respect the user's last position during the same session.
-        """
-        pass
+    # PythonQt does NOT expose QWidget.showEvent(), and attempts to
+    # override it caused crashes and freezes. Window size is now locked
+    # once in __init__() via setFixedSize(sizeHint), which is stable.
 
     # ------------------------------------------------------------------
     # LEFT-SIDE INITIAL PLACEMENT
@@ -144,9 +175,66 @@ class FreeAngulatorWidget(qt.QWidget):
         return None
 
     # ------------------------------------------------------------------
+    # Startup slice intersection environment
+    # ------------------------------------------------------------------
+    def initializeSliceIntersectionEnvironment(self):
+        """
+        Ensure that slice intersections are visible, interactive, and use
+        medium-thickness lines. Also ensure that all slices start in a common
+        ViewGroup so intersections are drawn immediately when FreeAngulator
+        is opened.
+
+        IMPORTANT:
+        This function **does not** touch slab mode or any slab-related
+        properties, so Thick Slab reconstruction remains fully functional.
+        """
+
+        # --------------------------------------------------------------
+        # 1. Enable slice intersections (CompositeNodes)
+        # --------------------------------------------------------------
+        for compNode in slicer.util.getNodesByClass("vtkMRMLSliceCompositeNode"):
+            try:
+                compNode.SetSliceIntersectionVisibility(1)
+                compNode.Modified()
+            except AttributeError:
+                pass
+
+        # --------------------------------------------------------------
+        # 2. Enable interaction + medium lines (SliceDisplayNodes)
+        # --------------------------------------------------------------
+        for displayNode in slicer.util.getNodesByClass("vtkMRMLSliceDisplayNode"):
+            try:
+                displayNode.SetIntersectingSlicesInteractive(True)
+            except AttributeError:
+                pass
+
+            try:
+                # 0 = fine, 1 = medium, 2 = thick
+                displayNode.SetIntersectingSlicesLineThicknessMode(1)
+            except AttributeError:
+                pass
+
+        # --------------------------------------------------------------
+        # 3. Normalize ViewGroups so intersections are visible initially
+        # --------------------------------------------------------------
+        for sliceNode in slicer.util.getNodesByClass("vtkMRMLSliceNode"):
+            try:
+                sliceNode.SetViewGroup(0)
+            except AttributeError:
+                pass
+
+        # --------------------------------------------------------------
+        # 4. Simple redraw (no pipeline override)
+        # --------------------------------------------------------------
+        slicer.util.forceRenderAllViews()
+
+    # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
     def buildUI(self):
+        # Initialize intersection environment before any FreeAngulator logic
+        self.initializeSliceIntersectionEnvironment()
+
         self.ensureInteractionModeViewTransform()
         self.ensureInteractionToolbarButtonChecked()
         self.ensureSliceIntersectionsVisible()
@@ -279,6 +367,14 @@ class FreeAngulatorWidget(qt.QWidget):
 
         print("Free Angulator floating panel opened.")
 
+        # NOTE:
+        # We intentionally do NOT install slice observers or renderRequested
+        # hooks here, to avoid interfering with Thick Slab reconstruction.
+        # FreeAngulator now relies on:
+        #   - startup medium thickness
+        #   - per-slice medium thickness when activating free angulation
+        # and leaves Slicer's own interaction/slab logic untouched.
+
     # ----------------------------------------------------------------------
     # Utility methods
     # ----------------------------------------------------------------------
@@ -323,6 +419,18 @@ class FreeAngulatorWidget(qt.QWidget):
     # Free slice angulation
     # ----------------------------------------------------------------------
     def setFreeAngulation(self, sliceName):
+        """
+        Activate free angulation for the selected slice.
+
+        This function:
+          - assigns ViewGroup 2 to the active slice
+          - assigns ViewGroup 1 to the others
+          - enables linked control
+          - sets medium line thickness for the active slice
+
+        It does **not** touch slab mode, so Thick Slab reconstruction
+        remains fully functional.
+        """
         lm = slicer.app.layoutManager()
         if not lm:
             return
@@ -341,19 +449,34 @@ class FreeAngulatorWidget(qt.QWidget):
             compNode = logic.GetSliceCompositeNode()
 
             if name == sliceName:
+                # Active slice goes to ViewGroup 2
                 sliceNode.SetViewGroup(2)
                 compNode.SetLinkedControl(True)
 
                 # ---------------------------------------------------------
-                # FIXED THICKNESS API (correct for Slicer 5.7)
+                # THICKNESS MODE API (medium lines, Slicer 5.7 compatible)
+                # NOTE:
+                #   Your Slicer build does NOT support:
+                #       sliceNode.GetSliceDisplayNode()
+                #   Therefore we MUST use the ID-based lookup.
                 # ---------------------------------------------------------
+                sliceDisplayNode = None
                 try:
-                    sliceDisplayNode = logic.GetSliceNode().GetSliceDisplayNode()
-                    sliceDisplayNode.SetIntersectingSlicesLineThickness(3)
+                    dnID = sliceNode.GetSliceDisplayNodeID()
+                    if dnID:
+                        sliceDisplayNode = slicer.mrmlScene.GetNodeByID(dnID)
                 except AttributeError:
-                    pass
+                    sliceDisplayNode = None
+
+                if sliceDisplayNode:
+                    try:
+                        # 0 = fine, 1 = medium, 2 = thick
+                        sliceDisplayNode.SetIntersectingSlicesLineThicknessMode(1)
+                    except AttributeError:
+                        pass
 
             else:
+                # Non-active slices go to ViewGroup 1
                 sliceNode.SetViewGroup(1)
                 compNode.SetLinkedControl(True)
 
@@ -389,6 +512,16 @@ class FreeAngulatorWidget(qt.QWidget):
                     continue
                 sliceNode = sw.sliceLogic().GetSliceNode()
                 sliceNode.SetViewGroup(1)
+
+            # ---------------------------------------------------------
+            # Disable slice linking so shortcut "v" only affects the clicked slice
+            # ---------------------------------------------------------
+            for name in ("Red", "Green", "Yellow"):
+                sw = lm.sliceWidget(name)
+                if not sw:
+                    continue
+                compNode = sw.sliceLogic().GetSliceCompositeNode()
+                compNode.SetLinkedControl(False)
 
         btnRed.blockSignals(True)
         btnGreen.blockSignals(True)
