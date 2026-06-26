@@ -1687,6 +1687,8 @@ class EPCMRWidget(ScriptedLoadableModuleWidget):
         # ------------------------------------------------------------------
         qt.QTimer.singleShot(250, self._setupStringNodeAddedObserver)
 
+        print("--- Sandbox Reload Successful! ---")
+
     # ----------------------------------------------------------------------
     # Free Angulator integration
     # ----------------------------------------------------------------------
