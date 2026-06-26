@@ -15,6 +15,10 @@ from slicer.ScriptedLoadableModule import *
 
 
 # ---- 2. Path Injection (MUST BE FIRST) ----
+# Excellent path injection code: This script automatically handles its own
+# subfolder structure by dynamically locating the current directory. It appends
+# the internal "EPCMRLib" to the Python search path (sys.path), completely
+# eliminating import path complexity across different development environments.
 moduleDir = os.path.dirname(os.path.abspath(__file__))
 if moduleDir not in sys.path:
     sys.path.append(moduleDir)
