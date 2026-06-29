@@ -64,7 +64,8 @@ chMap = (
     ("Abl_01", "dist"),  # ch0
     ("Abl_01", "prox"),  # ch1
     ("Ref_01", "dist"),  # ch2
-    ("Ref_01", "prox"))  # ch3
+    ("Ref_01", "prox"),
+)  # ch3
 
 
 # ==================================================================
@@ -90,14 +91,15 @@ coils = set([coil[1] for coil in chMap])
 oriMap = (
     "tra",  # slice 0
     "sag",  # slice 1
-    "cor")  # slice 2
+    "cor",
+)  # slice 2
 
 # =================================================================================================================================================================================
 # Entries from xml-configuation for Vision MR catheters (perhaps we should just parse the xml-File)
 # <DualCoilCatheter MaxExtent="5.0" Name="Vision MR" DeviceHardware="DualCoilCatheter" Diameter="3" DistanceBetweenCoils="5.8" DistanceBetweenTipAndNearestCoil="8.1"/>
 # =================================================================================================================================================================================
 noiseThreshold = 200  # Threshold above which we assume that this is a real signal
-minSNRtoTrustPosition = 10  # Minimum required SNR to trust a peak position 
+minSNRtoTrustPosition = 10  # Minimum required SNR to trust a peak position
 distanceBetweenCoils = 9  # distance between coil elements in mm (was 7.77)
 distanceBetweenTipAndNearestCoil = 8.1  # distance between the distal coil and the catheter tip
 margin = 4.0  # allowed tolerance of distance between coils (was 2.0)
@@ -126,7 +128,7 @@ udp_ip = "127.0.0.1"  # Currently localhost
 # ==================================================================================
 # Replay data from pickle file? If empty, normal MRTC communcation will be started.
 # ==================================================================================
-#replayPickleFile = ""
+# replayPickleFile = ""
 replayPickleFile = r"/home/christian-stehning/MRDATA/2026_06_18_MRTC_invivo/tracking_data_2026-06-18_14-20-40_christian.pkl"
 
 
@@ -167,6 +169,7 @@ def defaultdict_to_dict(d: Any) -> Any:
         # Base case: not a dict, return as is
         return d
 
+
 # ===================================================================================================================
 # We need to keep a few global counters and dictionaries.
 # Will be used in the function that is called when a fresh shot is received. The shotList will be saved at the end.
@@ -178,8 +181,9 @@ last_slice_number = 0
 # =================================================================================
 # (Mutlable) dictionaries that hold the received tracking data
 # =================================================================================
-curMutableDict = makehash() # A mutable, nested dictionary, will be filled on the fly as the data come in
+curMutableDict = makehash()  # A mutable, nested dictionary, will be filled on the fly as the data come in
 shotList = []  # A list of dictionaries that holds the data for each tracking shot
+
 
 # ===========================================================================================================
 # Function to detect the position of the peak in one projection. Similar algorithm as in the iSuite SW.
@@ -194,7 +198,9 @@ def findDualOrSinglePeak(rawData, voxelSizeM):
 
     # Are these two peaks within a reasonable distance (max extent, on both sides of the catheter shaft)?
     # Are they also similar in height?
-    if (voxelSizeM * (peakIdxs[1] - peakIdxs[0]) < maxExtent) and ((rawData[peakIdxs[1]] - rawData[peakIdxs[0]]) / rawData[peakIdxs[1]]< (maxRelPeakDiff / 100)):
+    if (voxelSizeM * (peakIdxs[1] - peakIdxs[0]) < maxExtent) and (
+        (rawData[peakIdxs[1]] - rawData[peakIdxs[0]]) / rawData[peakIdxs[1]] < (maxRelPeakDiff / 100)
+    ):
         # If so, locate the catheter between the peaks using a center of mass approach
         peakPos = np.average(peakIdxs, 0, rawData[peakIdxs].flatten()) * voxelSizeM
         dualPeak = True
@@ -271,21 +277,21 @@ def receive_message(s, image_m, m1, m2, m3, m4, num_images_to_set_stack_pos):
                 remote_ip, remote_port = s.getpeername()
                 pdu_string = mrtc_func.log_pdu(pdu)
                 if debug_mrtc:
-                    print(f"{local_ip}:{local_port} received "+ pdu_string+ f" from {remote_ip}:{remote_port}")
-            
+                    print(f"{local_ip}:{local_port} received " + pdu_string + f" from {remote_ip}:{remote_port}")
+
             if message_type == mrtc_pb2.MessageType.MESSAGE_TYPE_IMAGE_DATA:
                 # Process the image message and print the scan token
                 image_m.ParseFromString(payload)
-                
+
                 if debug_mrtc:
-                    print("Image scan token: "+ hex(int.from_bytes(image_m.scan_token, byteorder="big")).upper())
-                
-                #Send data to this function for evaluation and forwarding to 3DSlicer
+                    print("Image scan token: " + hex(int.from_bytes(image_m.scan_token, byteorder="big")).upper())
+
+                # Send data to this function for evaluation and forwarding to 3DSlicer
                 tracking_data_to_slicer(image_m, images, scan_names, shotList)
-                
+
                 images_ctr += 1
                 if images_ctr >= num_images_to_set_stack_pos:
-                    num_images_to_set_stack_pos = 2147483647  # maximum value for a signed integer                    
+                    num_images_to_set_stack_pos = 2147483647  # maximum value for a signed integer
 
                     # Create a SetStackPositionRequest message (m3)
                     m3.request_token = mrtc_func.get_request_token()
@@ -302,7 +308,7 @@ def receive_message(s, image_m, m1, m2, m3, m4, num_images_to_set_stack_pos):
                     stack_position.slice_orientation.column_direction_cosines.y = -1
                     stack_position.slice_orientation.column_direction_cosines.z = 0
                     payload = m3.SerializeToString()
-                    message_type3 = struct.pack("<I",mrtc_pb2.MessageType.MESSAGE_TYPE_SET_STACK_POSITIONS_REQUEST)
+                    message_type3 = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_SET_STACK_POSITIONS_REQUEST)
                     pdu3 = mrtc_func.pdu_from_payload_and_message_type(payload, message_type3)
                     s.sendall(pdu3)
                     if mrtc_func.trace_pdu:
@@ -313,22 +319,24 @@ def receive_message(s, image_m, m1, m2, m3, m4, num_images_to_set_stack_pos):
                             print(f"\n{local_ip}:{local_port} sending " + pdu_string + f" to {remote_ip}:{remote_port}")
                     if mrtc_func.trace_protobuf:
                         print(json_format.MessageToJson(m3))
-            elif (message_type == mrtc_pb2.MessageType.MESSAGE_TYPE_SET_STACK_POSITIONS_RESPONSE):
+            elif message_type == mrtc_pb2.MessageType.MESSAGE_TYPE_SET_STACK_POSITIONS_RESPONSE:
                 m4.ParseFromString(payload)
                 if debug_mrtc:
                     print("Set stack positions response message received!")
                 if mrtc_func.trace_protobuf:
                     print(json_format.MessageToJson(m4))
                 if debug_mrtc:
-                    print(f"Success: {m4.stack_positions_status == mrtc_pb2.StackPositionsStatus.STACK_POSITIONS_STATUS_ACTIVE}")
-            elif (message_type == mrtc_pb2.MessageType.MESSAGE_TYPE_RELEASE_SCAN_CONTROL_REQUEST):
+                    print(
+                        f"Success: {m4.stack_positions_status == mrtc_pb2.StackPositionsStatus.STACK_POSITIONS_STATUS_ACTIVE}"
+                    )
+            elif message_type == mrtc_pb2.MessageType.MESSAGE_TYPE_RELEASE_SCAN_CONTROL_REQUEST:
                 m1.ParseFromString(payload)
                 if mrtc_func.trace_protobuf:
                     print(json_format.MessageToJson(m1))
                 # Create a ReleaseScanControlResponse message (m2)
                 m2.request_token = m1.request_token
                 payload = m2.SerializeToString()
-                message_type2 = struct.pack("<I",mrtc_pb2.MessageType.MESSAGE_TYPE_RELEASE_SCAN_CONTROL_RESPONSE)
+                message_type2 = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_RELEASE_SCAN_CONTROL_RESPONSE)
                 pdu2 = mrtc_func.pdu_from_payload_and_message_type(payload, message_type2)
                 mrtc_func.s.sendall(pdu2)
                 if mrtc_func.trace_pdu:
@@ -361,9 +369,10 @@ def send_catheter(timestamp, catheter_id, proximal_xyz, distal_xyz, sock, udp_ip
     proximal_xyz: [x, y, z] coordinates of proximal coil (coil at lower end of tip)
     distal_xyz: [x, y, z] coordinate of distal coil (coil at upper end of tip)
     """
-    message = f"{int(timestamp)},{catheter_id},{proximal_xyz[0]},{proximal_xyz[1]},{proximal_xyz[2]},{distal_xyz[0]},{distal_xyz[1]},{distal_xyz[2]}".encode("utf-8")
+    message = f"{int(timestamp)},{catheter_id},{proximal_xyz[0]},{proximal_xyz[1]},{proximal_xyz[2]},{distal_xyz[0]},{distal_xyz[1]},{distal_xyz[2]}".encode(
+        "utf-8"
+    )
     sock.sendto(message, (udp_ip, udp_port))
-
 
 
 # ===============================================================================
@@ -371,7 +380,7 @@ def send_catheter(timestamp, catheter_id, proximal_xyz, distal_xyz, sock, udp_ip
 # distance to the current position. This avoids that if a catheter is moved quickly,
 # or the last known, position is far away for other reasons, avaraging would hallucinate
 # an artificial catheter trajectory to the current position.
-#=========================================================================================
+# =========================================================================================
 def tip_pos_ori(cath, shot, shotList, numAverages, maxAveragingDistance):
     if shot[cath]["valid"]:
         validPositionSeen[cath] = True
@@ -381,14 +390,14 @@ def tip_pos_ori(cath, shot, shotList, numAverages, maxAveragingDistance):
             posVector = [shot[cath][coil]["coilPositionXYZ"]]
             distVector = [0.0]
             n = 1
-            while (n < len(shotList)) and len(posVector)<numAverages:
+            while (n < len(shotList)) and len(posVector) < numAverages:
                 if shotList[-n][cath]["valid"]:
                     posVector.append(shotList[-n][cath][coil]["coilPositionXYZ"])
                     distVector.append(posVector[-1] - posVector[0])
                 n = n + 1
 
             # Offset to avoid zeros in weight denominator
-            weightsVector = [1/(np.linalg.norm(distVector[i]) + maxAveragingDistance) for i in range(len(distVector))]
+            weightsVector = [1 / (np.linalg.norm(distVector[i]) + maxAveragingDistance) for i in range(len(distVector))]
 
             avgCoilPositionXYZ[coil] = np.average(posVector, weights=weightsVector, axis=0)
 
@@ -397,22 +406,22 @@ def tip_pos_ori(cath, shot, shotList, numAverages, maxAveragingDistance):
         coilDistance = np.linalg.norm(avgDirVector)
         if coilDistance != 0:
             avgDirVector /= coilDistance
-            
-        avgTipPos = avgCenterPos + (0.5 * distanceBetweenCoils + distanceBetweenTipAndNearestCoil) * avgDirVector     
+
+        avgTipPos = avgCenterPos + (0.5 * distanceBetweenCoils + distanceBetweenTipAndNearestCoil) * avgDirVector
         lastGoodAvgTipPos[cath] = avgTipPos
         lastGoodAvgDirVector[cath] = avgDirVector
-        
+
     else:
         avgTipPos = lastGoodAvgTipPos[cath]
         avgDirVector = lastGoodAvgDirVector[cath]
-            
+
     return (avgTipPos, avgDirVector)
 
 
 # ====================================================================================================
 # Convert the catheter tip position and orientation into a transformation matrix that warps a model
 # of the catheter onto the corresponding position in 3Dslicer
-#=====================================================================================================
+# =====================================================================================================
 def pos_to_matrix(pos, dirVector):
     # ===========================================================================================================================================
     # References (rotation matrix)
@@ -478,8 +487,20 @@ def tracking_data_to_slicer(message, images, scan_names, shotList):
         ori = oriMap[message.slice_number]
         cath = chMap[ord_number][0]
         coil = chMap[ord_number][1]
-        readDirection = np.array((message.slice_orientation.row_direction_cosines.x, message.slice_orientation.row_direction_cosines.y, message.slice_orientation.row_direction_cosines.z))
-        centerPointUpperLeftVoxel_mm = np.array((message.center_point_of_upper_left_voxel_mm.x, message.center_point_of_upper_left_voxel_mm.y, message.center_point_of_upper_left_voxel_mm.z))
+        readDirection = np.array(
+            (
+                message.slice_orientation.row_direction_cosines.x,
+                message.slice_orientation.row_direction_cosines.y,
+                message.slice_orientation.row_direction_cosines.z,
+            )
+        )
+        centerPointUpperLeftVoxel_mm = np.array(
+            (
+                message.center_point_of_upper_left_voxel_mm.x,
+                message.center_point_of_upper_left_voxel_mm.y,
+                message.center_point_of_upper_left_voxel_mm.z,
+            )
+        )
 
         # ========================================================================================================================
         # Annoyingly, the readout orientation vector for one stack orientation (coronal) appears to be wrong (vector is swopped)
@@ -557,17 +578,25 @@ def tracking_data_to_slicer(message, images, scan_names, shotList):
 
             # Determine all coil positions in xyz-Space
             for [cath, coil] in chMap:
-                trackingShotDict[cath][coil]["coilPositionXYZ"] = (trackingShotDict[cath][coil]["tra"]["coilPos_mm"] + trackingShotDict[cath][coil]["sag"]["coilPos_mm"] + trackingShotDict[cath][coil]["cor"]["coilPos_mm"])
-                
+                trackingShotDict[cath][coil]["coilPositionXYZ"] = (
+                    trackingShotDict[cath][coil]["tra"]["coilPos_mm"]
+                    + trackingShotDict[cath][coil]["sag"]["coilPos_mm"]
+                    + trackingShotDict[cath][coil]["cor"]["coilPos_mm"]
+                )
+
                 # Set receive timestamp
                 trackingShotDict[cath]["timestamp"] = datetime.now()
 
             for cath in trackingShotDict.keys():
                 # Center position between the coils
-                trackingShotDict[cath]["centerPos"] = (trackingShotDict[cath]["dist"]["coilPositionXYZ"] + trackingShotDict[cath]["prox"]["coilPositionXYZ"]) / 2
+                trackingShotDict[cath]["centerPos"] = (
+                    trackingShotDict[cath]["dist"]["coilPositionXYZ"] + trackingShotDict[cath]["prox"]["coilPositionXYZ"]
+                ) / 2
 
                 # Catheter tip direction vector
-                trackingShotDict[cath]["dirVector"] = (trackingShotDict[cath]["dist"]["coilPositionXYZ"] - trackingShotDict[cath]["prox"]["coilPositionXYZ"])
+                trackingShotDict[cath]["dirVector"] = (
+                    trackingShotDict[cath]["dist"]["coilPositionXYZ"] - trackingShotDict[cath]["prox"]["coilPositionXYZ"]
+                )
                 # Distance between coil (=length of direction vector)
                 trackingShotDict[cath]["coilDistance"] = np.linalg.norm(trackingShotDict[cath]["dirVector"])
 
@@ -579,14 +608,16 @@ def tracking_data_to_slicer(message, images, scan_names, shotList):
                 snrOK = all(snr > minSNRtoTrustPosition for snr in nested_lookup("SNR", trackingShotDict[cath]))
 
                 # Sanity check #2 (distance between coils on catheter tip)
-                distOK = (np.abs(trackingShotDict[cath]["coilDistance"]) < distanceBetweenCoils + margin)
+                distOK = np.abs(trackingShotDict[cath]["coilDistance"]) < distanceBetweenCoils + margin
 
                 # Add validity flag to tracking shot dictionary
                 trackingShotDict[cath]["valid"] = snrOK and distOK
 
                 # Calc distance to last shot (note: not looking at validity)
                 if len(shotList) > 0:
-                    trackingShotDict[cath]["distanceToLastShot"] = np.linalg.norm(trackingShotDict[cath]["centerPos"] - shotList[-1][cath]["centerPos"])
+                    trackingShotDict[cath]["distanceToLastShot"] = np.linalg.norm(
+                        trackingShotDict[cath]["centerPos"] - shotList[-1][cath]["centerPos"]
+                    )
                 else:
                     trackingShotDict[cath]["distanceToLastShot"] = 0.0
 
@@ -596,23 +627,38 @@ def tracking_data_to_slicer(message, images, scan_names, shotList):
                 # As per discussion on Jun 1, 2026, we will send the tip position (i.s.o. center between coils) to Slicer
                 # ===================================================================================================================
 
-                [avgTipPos, avgDirVector] = tip_pos_ori(cath, trackingShotDict, shotList, numAverages, maxAveragingDistance)                                                    
+                [avgTipPos, avgDirVector] = tip_pos_ori(cath, trackingShotDict, shotList, numAverages, maxAveragingDistance)
 
                 # =======================================================
                 # Send current transformation to Slicer and/or HoloLens
                 # =======================================================
                 if sendToSlicer and validPositionSeen[cath]:
-                    transform_message = pyigtl.TransformMessage(pos_to_matrix(avgTipPos, avgDirVector), device_name=cath + "_TF", timestamp=time())
-                    
+                    transform_message = pyigtl.TransformMessage(
+                        pos_to_matrix(avgTipPos, avgDirVector), device_name=cath + "_TF", timestamp=time()
+                    )
+
                     transform_message.header_version = 2
-                    transform_message.metadata = {"valid": str(trackingShotDict[cath]["valid"]),"tipPos": str(avgTipPos.tolist())}
+                    transform_message.metadata = {
+                        "valid": str(trackingShotDict[cath]["valid"]),
+                        "tipPos": str(avgTipPos.tolist()),
+                    }
                     server.send_message(transform_message)
 
                 if sendToHoloLens and validPositionSeen[cath]:
-                    send_catheter(len(shotList), cathID[cath], trackingShotDict[cath]["prox"]["coilPositionXYZ"], trackingShotDict[cath]["dist"]["coilPositionXYZ"], sock, udp_ip, cathPort[cath])
+                    send_catheter(
+                        len(shotList),
+                        cathID[cath],
+                        trackingShotDict[cath]["prox"]["coilPositionXYZ"],
+                        trackingShotDict[cath]["dist"]["coilPositionXYZ"],
+                        sock,
+                        udp_ip,
+                        cathPort[cath],
+                    )
 
             # Add our current shot to the shot list. Be very careful with identation!
-            shotList.append(copy.deepcopy(trackingShotDict))  # A deep copy ensures that nested dictionaries or mutable objects within the dictionary are also copied, not just referenced.
+            shotList.append(
+                copy.deepcopy(trackingShotDict)
+            )  # A deep copy ensures that nested dictionaries or mutable objects within the dictionary are also copied, not just referenced.
 
 
 # ==============================================
@@ -620,7 +666,7 @@ def tracking_data_to_slicer(message, images, scan_names, shotList):
 # ==============================================
 
 if sendToSlicer:
-    # "Slicer must be enabled as client, default port for OpenIGTLink is 18944"   
+    # "Slicer must be enabled as client, default port for OpenIGTLink is 18944"
     server = pyigtl.OpenIGTLinkServer(port=18944, local_server=True)
     server.start()
 
@@ -658,27 +704,33 @@ if replayPickleFile:
         shotList[0][cath]["distanceToLastShot"] = 0
 
         for idx in range(1, len(shotList)):
-            shotList[idx][cath]["distanceToLastShot"] = np.linalg.norm(shotList[idx][cath]["centerPos"] - shotList[idx - 1][cath]["centerPos"])
-         
-        # Count the number of invalid positions (blanks) for a coarse analysis of the tracking signal quality            
+            shotList[idx][cath]["distanceToLastShot"] = np.linalg.norm(
+                shotList[idx][cath]["centerPos"] - shotList[idx - 1][cath]["centerPos"]
+            )
+
+        # Count the number of invalid positions (blanks) for a coarse analysis of the tracking signal quality
         c = Counter()
         for shot in shotList:
             c[shot[cath]["valid"]] += 1
-        print(f"Catheter {cath} has {c[False]} invalid versus {c[True]} valid positions ({round(c[False]/len(shotList) * 100)}% invalid)")
-            
+        print(
+            f"Catheter {cath} has {c[False]} invalid versus {c[True]} valid positions ({round(c[False] / len(shotList) * 100)}% invalid)"
+        )
+
     for shotIdx in range(1, len(shotList)):
         # Use simulated shotList (up to the current position) from the full shotList.
         # and simulated current shot (last element in array)
         for cath in caths:
             curShot = shotList[shotIdx]
-            [avgTipPos, avgDirVector] = tip_pos_ori(cath, curShot, shotList[0:shotIdx], numAverages, maxAveragingDistance)   
+            [avgTipPos, avgDirVector] = tip_pos_ori(cath, curShot, shotList[0:shotIdx], numAverages, maxAveragingDistance)
             # =======================================================
             # Send current transformation to Slicer and/or HoloLens
             # =======================================================
             if sendToSlicer and validPositionSeen[cath]:
-                transform_message = pyigtl.TransformMessage(pos_to_matrix(avgTipPos, avgDirVector), device_name=cath + "_TF", timestamp=time())
+                transform_message = pyigtl.TransformMessage(
+                    pos_to_matrix(avgTipPos, avgDirVector), device_name=cath + "_TF", timestamp=time()
+                )
                 transform_message.header_version = 2
-                transform_message.metadata = {"valid": str(curShot[cath]["valid"]), "tipPos": str(avgTipPos.tolist())}                
+                transform_message.metadata = {"valid": str(curShot[cath]["valid"]), "tipPos": str(avgTipPos.tolist())}
                 server.send_message(transform_message)
                 sleep(0.05)
 
@@ -694,7 +746,7 @@ else:
     message_type = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_PING_SERVICE_PROVIDER_REQUEST)
     mrtc_func.send_and_receive_message(message_type, m1, m2, mrtc_func.init_serv_address, mrtc_func.init_serv_port)
     incarnation_token = m2.incarnation_token
-    print("Incarnation token: "+ hex(int.from_bytes(incarnation_token, byteorder="big")).upper())
+    print("Incarnation token: " + hex(int.from_bytes(incarnation_token, byteorder="big")).upper())
 
     # SyncSystemConfigRequest to the Init Service
     print("\n--- SyncSystemConfigRequest to the Init Service ---\n")
@@ -741,7 +793,7 @@ else:
     m2 = mrtc_pb2.GetHospitalExamCardsInfoResponseMessage()
     message_type = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_GET_HOSPITAL_EXAM_CARDS_INFO_REQUEST)
     mrtc_func.send_and_receive_message(message_type, m1, m2, mrtc_func.init_serv_address, mrtc_func.init_serv_port)
-    
+
     for exam_card in m2.exam_cards:
         # Access each item in the repeated field
         print(f"ExamCard: {exam_card.id.path} (signature: {exam_card.id.signature})")
@@ -767,7 +819,7 @@ else:
     m1.patient_data.patient_weight_kg = 90
     m1.therapy_mode = mrtc_pb2.TherapyMode.THERAPY_MODE_RESEARCH
     m1.patient_position = mrtc_pb2.PatientPosition.PATIENT_POSITION_HEAD_FIRST_SUPINE
-    m1.exam_card_id.repository = (mrtc_pb2.ExamCardRepository.EXAM_CARD_REPOSITORY_HOSPITAL_MRTC_FOLDER)
+    m1.exam_card_id.repository = mrtc_pb2.ExamCardRepository.EXAM_CARD_REPOSITORY_HOSPITAL_MRTC_FOLDER
     m1.exam_card_id.path = mrtc_func.exam_card_id_path
     m1.exam_card_id.signature = b""
     mrtc_func.send_and_receive_message(message_type, m1, m2, exam_serv_address, exam_serv_port)
@@ -777,7 +829,7 @@ else:
     # ==========================================================================================================
     # StartScanRequest to the Scan Service, with a tracking scan with real-time image sending
     # Put this into a loop. We may have to start silent tracking over and over (without closing the ExamCard)
-    #===========================================================================================================
+    # ===========================================================================================================
 
     keyIn = ""
 
@@ -792,7 +844,9 @@ else:
         m1.exam_token = exam_token
         m1.scan_protocol_name = protocol_name
 
-        sc_socket = mrtc_func.start_scan_and_take_scan_control_messages(message_type1, message_type3, m1, m2, m3, m4, scan_serv_address, scan_serv_port)
+        sc_socket = mrtc_func.start_scan_and_take_scan_control_messages(
+            message_type1, message_type3, m1, m2, m3, m4, scan_serv_address, scan_serv_port
+        )
         scan_token = m4.scan_token
         remaining_scan_time = m4.approximate_remaining_scan_time_in_seconds
         print("Scan token: " + hex(int.from_bytes(scan_token, byteorder="big")).upper())
@@ -806,7 +860,7 @@ else:
         m3 = mrtc_pb2.SetStackPositionsRequestMessage()
         m4 = mrtc_pb2.SetStackPositionsResponseMessage()
         receive_message(sc_socket, image_m, m1, m2, m3, m4, 2)
-        keyIn = input("Press Enter to restart tracking scan. Press ""s"" key + Enter to stop the loop: ")
+        keyIn = input("Press Enter to restart tracking scan. Press s key + Enter to stop the loop: ")
 
     # ==================================
     # Save data into a pickle file
@@ -817,14 +871,16 @@ else:
     pickle.dump(shotList, f)
     f.close()
     print(f"Tracking data were saved to {file}")
-    
+
 # =================================
 # Close server (if needed)
-#==================================
-    
+# ==================================
+
 if "server" in locals() and server is not None:
     import threading
+
     print("Safely shutting down pyigtl connections...")
+
     # WinError 10038: Occurs because the main thread destroys the network
     # socket while a background thread is still actively polling it for data.
     # Override the thread exception handler to ignore the WinError 10038 noise
