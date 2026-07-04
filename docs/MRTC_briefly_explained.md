@@ -15,6 +15,7 @@ MRTC (Magnetic Resonance Therapy Control) is an interface designed to connect Ph
 * **Interoperability:** Facilitates communication between different operating systems and programming languages to allow treatment device manufacturers to customize their specific procedural workflows.
 
 ### MRTC Message format
+
 * Messages exchanged between the MR scanner and the therapy control software are transported as byte sequences called Protocol Data Units or PDUs. A PDU consists of a 4-byte length field, followed by an 8-byte protocol version field, followed by a 4-byte message type field, followed by a variable-length message data field, followed by a 4-byte checksum field.
   <img width="535" height="40" alt="MessageFormat" src="https://github.com/user-attachments/assets/0119712c-495f-441f-ae2e-ab5820216fd3" />
 
@@ -32,9 +33,9 @@ MRTC (Magnetic Resonance Therapy Control) is an interface designed to connect Ph
 
   <img width="352" height="157" alt="MessageTypes" src="https://github.com/user-attachments/assets/8cef22cd-af58-4424-8a0d-00d9dc243a22" />
 
-
 ### Practical Impact on Workflows
-MRTC is part of the SIGNET project [ITEA SIGNET project](https://itea4.org) as an open, vendor-independent interface. This interface enables real-time coordination between MR scanning, therapy control, and physiological streaming. By eliminating manual, fragmented data tracking steps, validated demonstrators proved major workflow improvements:
+
+MRTC is part of the SIGNET project [ITEA SIGNET project](https://itea4.org/project/signet.html) as an open, vendor-independent interface. This interface enables real-time coordination between MR scanning, therapy control, and physiological streaming. By eliminating manual, fragmented data tracking steps, validated demonstrators proved major workflow improvements:
 
 * **Oncology Biopsies**: Average procedure times dropped from over 60 minutes to under 20 minutes, while required tissue samples fell from 14 down to just 1 or 2 due to automated precision.
 * **Neurology Processing**: Manual data handling and registration steps were cut exactly in half.
