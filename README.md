@@ -1,3 +1,5 @@
+
+
 <div align="center">
 
 # EPCMR — Electrophysiology CMR Toolkit
@@ -8,7 +10,7 @@ and Pulmonary-Vein / PVC ablation workflows with real-time MR-tracked catheter g
 ![Category](https://img.shields.io/badge/3D%20Slicer-Cardiac-blue)
 ![License](https://img.shields.io/badge/license-BSD--3--Clause-green)
 ![Status](https://img.shields.io/badge/status-research%20software-orange)
-
+![EPCMR_icon](./Resources/Icons/EPCMR_128.png)
 </div>
 
 > ⚠️ **Research software only.** EPCMR is *not* a medical device and is *not* cleared
@@ -24,9 +26,7 @@ electrophysiology (EP) cardiac-MR workflows into Slicer. It combines pre-procedu
 anatomy, interactive angulation, and **live MR-tracked catheter visualization** streamed
 over [OpenIGTLink](http://openigtlink.org/).
 
-<div align="center">
-![EPCMR](docs/images/EPCMR_teaser.gof)
-</div>
+<img src="./docs/images/EPCMR_Teaser.gif" width="65%" height="65%"/>
 
 ### Features
 
