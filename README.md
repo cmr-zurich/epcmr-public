@@ -1,8 +1,8 @@
 
 
 <div align="center">
-
-<h1><img src="./Resources/Icons/EPCMR_128.png" alt="EPCMR logo" width="44" /> EPCMR — Electrophysiology CMR Toolkit</h1>
+<img src="./Resources/Icons/EPCMR_128.png" alt="EPCMR logo" width="128" />
+<h1> EPCMR — Electrophysiology CMR Toolkit</h1>
 
 **A multi-procedure EP-CMR suite for 3D Slicer**, supporting Right-Atrial (RA) Flutter
 and Pulmonary-Vein / PVC ablation workflows with real-time MR-tracked catheter guidance.
