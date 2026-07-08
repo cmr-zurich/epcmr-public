@@ -16,3 +16,4 @@ This folder holds extended documentation for EPCMR. The top-level
 
 - `images/` — figures and screenshots referenced by the docs
   (e.g. `images/databridge.png`).
+  - `videos/` — tutorial videos with captions
