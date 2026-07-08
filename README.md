@@ -24,6 +24,10 @@ electrophysiology (EP) cardiac-MR workflows into Slicer. It combines pre-procedu
 anatomy, interactive angulation, and **live MR-tracked catheter visualization** streamed
 over [OpenIGTLink](http://openigtlink.org/).
 
+<div align="center">
+![EPCMR](docs/images/EPCMR_teaser.gof)
+</div>
+
 ### Features
 
 - **RA Flutter** — right-atrial flutter mapping and ablation support.
@@ -91,6 +95,16 @@ You can explore the full workflow without a scanner using the bundled example da
    [`ExampleData/replay_jsonlines/igtl_stream.jsonl`](ExampleData/replay_jsonlines/)
    (or the recorded tracking pickle).
 3. Start replay to see catheter transforms drive the scene.
+
+---
+
+## Tutorials
+
+Several video tutorials are available demonstrating catheter navigation and voltage mapping:
+
+1. [`Tutorial Video 1`](docs/videos/TutorialVideo_01_Captions.mp4) : Scene Setup & Real-time Catheter Navigation
+2. [`Tutorial Video 2`](docs/videos/TutorialVideo_02_Captions.mp4) : Activation Time Mapping
+3. [`Tutorial Video 3`](docs/videos/TutorialVideo_03_Captions.mp4) : Voltage Mapping
 
 ---
 
