@@ -1,6 +1,8 @@
 from time import time, sleep
 import numpy as np
 import pickle
+from collections import deque
+
 
 # ===============================================================================
 # This is for creating, converting  and searching mutable, nested dictionaries
@@ -416,6 +418,134 @@ def smart_averaging_weighted_mean(cath, shot, shotList, numAverages, maxAveragin
         coilDistance = np.linalg.norm(avgDirVector)
         if coilDistance != 0:
             avgDirVector /= coilDistance
+
+    return (avgCenterPos, avgDirVector)
+
+
+def smart_averaging_IDW(cath, shot, shotList, numAverages, maxAveragingDistance):
+    """
+    Applies Real-Time Velocity-Adaptive Inverse Distance Weighting (IDW) to smooth catheter telemetry tracking.
+
+    Behavioral Architecture:
+    1. Stateful Telemetry Guard:
+       Tracks sequential dropped or invalid frames. If a telemetry blackout occurs (drops > 2),
+       it clears historical buffers to instantly bypass lag and output raw real-time coordinates.
+
+    2. Dynamic Memory Architecture:
+       Maintains internal persistent deques attached directly to the function namespace. It automatically
+       re-allocates and resizes historical horizons at runtime if the 'numAverages' threshold changes.
+
+    3. Spatial IDW Math Core:
+       Measures physical Euclidean distances between the incoming real-time position and cached history points.
+       Applies standard spatial IDW weighting [ 1 / (distance + offset) ] to favor nearby localized frames
+       and prevent trailing coordinate lag during navigation.
+
+    4. Velocity-Capped Jump Filtering:
+       Measures sudden coordinate jumps against 'maxAveragingDistance'. If the movement velocity spike
+       exceeds this threshold, history processing is temporarily shut down to prevent the catheter from
+       rendering an mathematically generated "illegal trajectory shortcut" during sudden real-world shifts.
+
+    Returns:
+        tuple: (avgCenterPos, avgDirVector)
+               - avgCenterPos: Dict containing the computed 3D spatial midpoint array.
+               - avgDirVector: Dict containing the normalized 3D directional unit vector array.
+    """
+    # Initialize the stateful counter on the function object if it doesn't exist yet
+    if not hasattr(smart_averaging_IDW, "consecutive_errors"):
+        smart_averaging_IDW.consecutive_errors = 0
+
+    # Max allowed sequential drops before we declare a total telemetry blackout
+    MAX_ALLOWED_DROPS = 2
+
+    # Initialize return variables to prevent UnboundLocalError if shot[cath]["valid"] is False
+    avgCenterPos = {}
+    avgDirVector = {}
+    coils = ["dist", "prox"]
+
+    # 1. Handle Invalid Live Frames immediately to increment our error counter
+    if not shot.get(cath, {}).get("valid", False):
+        smart_averaging_IDW.consecutive_errors += 1
+        return (avgCenterPos, avgDirVector)
+
+    # 2. Check if we are recovering from a major telemetry blackout
+    if smart_averaging_IDW.consecutive_errors > MAX_ALLOWED_DROPS:
+        # Reset the counter and calculate a crisp, raw real-time position bypass
+        # to prevent pulling in stale historical data vectors across the blackout gap
+        smart_averaging_IDW.consecutive_errors = 0
+
+        # Clear any stored ring buffer history on blackout recovery to ensure smooth re-locking
+        if hasattr(smart_averaging_IDW, "_filter_instance"):
+            delattr(smart_averaging_IDW, "_filter_instance")
+
+        avgCenterPos = (np.array(shot[cath]["dist"]["coilPositionXYZ"]) + np.array(shot[cath]["prox"]["coilPositionXYZ"])) / 2.0
+        avgDirVector = np.array(shot[cath]["dist"]["coilPositionXYZ"]) - np.array(shot[cath]["prox"]["coilPositionXYZ"])
+
+        coilDistance = np.linalg.norm(avgDirVector)
+        if coilDistance > 0:
+            avgDirVector /= coilDistance
+        else:
+            avgDirVector = np.array([0.0, 0.0, 0.0])
+
+        return (avgCenterPos, avgDirVector)
+
+    # If the frame is valid and we aren't recovering from a blackout, clear error streak
+    smart_averaging_IDW.consecutive_errors = 0
+
+    # Initialize or dynamically update the persistent filter settings if values change mid-stream
+    if not hasattr(smart_averaging_IDW, "_filter_instance"):
+        smart_averaging_IDW._filter_instance = type("FilterState", (), {})()
+        smart_averaging_IDW._filter_instance.buffers = {"dist": deque(maxlen=numAverages), "prox": deque(maxlen=numAverages)}
+
+    # Enforce updated maxlen dynamically if numAverages changes during runtime
+    for coil in coils:
+        if smart_averaging_IDW._filter_instance.buffers[coil].maxlen != numAverages:
+            # Recreate deque while preserving existing historical elements
+            existing_elements = list(smart_averaging_IDW._filter_instance.buffers[coil])
+            smart_averaging_IDW._filter_instance.buffers[coil] = deque(existing_elements, maxlen=numAverages)
+
+    # Target the persistent buffer reference
+    history_buffers = smart_averaging_IDW._filter_instance.buffers
+    avgCoilPositionXYZ = {}
+    offset = 5.0  # Safe default smoothing parameter matching your class definition
+
+    # =========================================================================
+    # True Spatial Inverse Distance Weighting (IDW) Core Math Block
+    # =========================================================================
+    for coil in coils:
+        current_pos = np.array(shot[cath][coil]["coilPositionXYZ"])
+
+        # Init spatial vectors with just the current frame data
+        posVector = [current_pos]
+        distVector = [np.array([0.0, 0.0, 0.0])]
+
+        # --- Velocity Guard: Check for large jumps to turn off averaging ---
+        jump_distance = 0.0
+        if len(history_buffers[coil]) > 0:
+            previous_valid_pos = history_buffers[coil][0]  # Leftmost element is the latest frame
+            jump_distance = np.linalg.norm(current_pos - previous_valid_pos)
+
+        # Only pull in localized historical coordinates if movement stays under the threshold
+        if jump_distance <= maxAveragingDistance:
+            for hist_pos in history_buffers[coil]:
+                posVector.append(hist_pos)
+                distVector.append(hist_pos - current_pos)
+
+        # --- Distance Weighting Inversion Calculation ---
+        weightsVector = [1.0 / (np.linalg.norm(distVector[i]) + offset) for i in range(len(distVector))]
+
+        # Blend spatial coordinates using true normalized IDW weights
+        avgCoilPositionXYZ[coil] = np.average(posVector, weights=weightsVector, axis=0)
+
+        # Internal State Update: Cache this valid frame into the ring-buffer for the next cycle
+        history_buffers[coil].appendleft(current_pos)
+
+    # --- Geometric Slicer Transformation Vector Feature Extraction ---
+    avgCenterPos = (avgCoilPositionXYZ["dist"] + avgCoilPositionXYZ["prox"]) / 2.0
+    avgDirVector = avgCoilPositionXYZ["dist"] - avgCoilPositionXYZ["prox"]
+    coilDistance = np.linalg.norm(avgDirVector)
+
+    if coilDistance != 0:
+        avgDirVector /= coilDistance
 
     return (avgCenterPos, avgDirVector)
 
@@ -853,7 +983,7 @@ if replayPickleFile:
             curShot = shotList[shotIdx]
             if curShot[cath]["valid"]:
                 validPositionSeen[cath] = True
-                [avgCenterPos, avgDirVector] = smart_averaging_velocity_adaptive_ema(
+                [avgCenterPos, avgDirVector] = smart_averaging_IDW(
                     cath,
                     curShot,
                     shotList[0:shotIdx],

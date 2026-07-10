@@ -15,6 +15,7 @@ venv/
 *.pyi~
 .idea/
 .vscode/
+*.code-workspace
 
 # Build output
 build/
