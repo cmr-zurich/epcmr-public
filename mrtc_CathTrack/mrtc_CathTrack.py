@@ -125,7 +125,7 @@ numAverages = 5
 # ================================================
 # Want transformation matrices sent to Slicer?
 # ================================================
-sendToSlicer = False
+sendToSlicer = True
 
 # =================================================
 # Want coil positions sent to HoloLens?
@@ -672,7 +672,7 @@ def handle_StartExamRequest():
     m1 = mrtc_pb2.PingServiceProviderRequestMessage()
     m2 = mrtc_pb2.PingServiceProviderResponseMessage()
     message_type = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_PING_SERVICE_PROVIDER_REQUEST)
-    mrtc_func.send_and_receive_message(message_type, m1, m2, mrtc_func.init_serv_address, mrtc_func.init_serv_port)
+    mrtc_func.send_and_receive_message(message_type, m1, m2, init_serv_address, init_serv_port)
     incarnation_token = m2.incarnation_token
     print("Incarnation token: "+ hex(int.from_bytes(incarnation_token, byteorder="big")).upper())
 
@@ -682,17 +682,17 @@ def handle_StartExamRequest():
     m2 = mrtc_pb2.SyncSystemConfigResponseMessage()
     message_type = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_SYNC_SYSTEM_CONFIG_REQUEST)
     m1.allow_mr_research_features = True
-    m1.ntp_service_address.host_name_or_ip_address = mrtc_func.ntp_server_address
-    m1.ntp_service_address.port_number = mrtc_func.ntp_server_port
+    m1.ntp_service_address.host_name_or_ip_address = ntp_server_address
+    m1.ntp_service_address.port_number = ntp_server_port
     dicom_storage_scp_addresses = m1.dicom_storage_scp_addresses.add()
-    dicom_storage_scp_addresses.tcp_address.host_name_or_ip_address = mrtc_func.dicom_server_address
-    dicom_storage_scp_addresses.tcp_address.port_number = mrtc_func.dicom_server_port
-    dicom_storage_scp_addresses.ae_title = mrtc_func.dicom_aetitle
-    m1.scan_control_service_address.host_name_or_ip_address = mrtc_func.tc_scan_serv_address
-    m1.scan_control_service_address.port_number = mrtc_func.tc_scan_serv_port
+    dicom_storage_scp_addresses.tcp_address.host_name_or_ip_address = dicom_server_address
+    dicom_storage_scp_addresses.tcp_address.port_number = dicom_server_port
+    dicom_storage_scp_addresses.ae_title = dicom_aetitle
+    m1.scan_control_service_address.host_name_or_ip_address = tc_scan_serv_address
+    m1.scan_control_service_address.port_number = tc_scan_serv_port
     m1.local_windows_time_zone_id = mrtc_func.get_local_time_zone_id()
     m1.philips_exam_card_database_version = mrtc_func.database_version
-    mrtc_func.send_and_receive_message(message_type, m1, m2, mrtc_func.init_serv_address, mrtc_func.init_serv_port)
+    mrtc_func.send_and_receive_message(message_type, m1, m2, init_serv_address, init_serv_port)
     config_token = m2.config_token
     exam_serv_address = m2.exam_service_address.host_name_or_ip_address
     exam_serv_port = m2.exam_service_address.port_number
@@ -712,7 +712,7 @@ def handle_StartExamRequest():
     m1 = mrtc_pb2.SyncActiveUserRequestMessage()
     m2 = mrtc_pb2.SyncActiveUserResponseMessage()
     message_type = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_SYNC_ACTIVE_USER_REQUEST)
-    m1.user_id = mrtc_func.active_user
+    m1.user_id = active_user
     mrtc_func.send_and_receive_message(message_type, m1, m2, user_serv_address, user_serv_port)
     user_token = m2.user_token
     print("User token: " + hex(int.from_bytes(user_token, byteorder="big")).upper())
@@ -722,7 +722,7 @@ def handle_StartExamRequest():
     m1 = mrtc_pb2.GetHospitalExamCardsInfoRequestMessage()
     m2 = mrtc_pb2.GetHospitalExamCardsInfoResponseMessage()
     message_type = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_GET_HOSPITAL_EXAM_CARDS_INFO_REQUEST)
-    mrtc_func.send_and_receive_message(message_type, m1, m2, mrtc_func.init_serv_address, mrtc_func.init_serv_port)
+    mrtc_func.send_and_receive_message(message_type, m1, m2, init_serv_address, init_serv_port)
 
     for exam_card in m2.exam_cards:
         # Access each item in the repeated field
@@ -758,7 +758,7 @@ def handle_StartExamRequest():
     m1.therapy_mode = mrtc_pb2.TherapyMode.THERAPY_MODE_RESEARCH
     m1.patient_position = mrtc_pb2.PatientPosition.PATIENT_POSITION_HEAD_FIRST_SUPINE
     m1.exam_card_id.repository = mrtc_pb2.ExamCardRepository.EXAM_CARD_REPOSITORY_HOSPITAL_MRTC_FOLDER
-    m1.exam_card_id.path = mrtc_func.exam_card_id_path
+    m1.exam_card_id.path = exam_card_id_path
     m1.exam_card_id.signature = b''
     mrtc_func.send_and_receive_message(message_type, m1, m2, exam_serv_address, exam_serv_port)
     global exam_token 
@@ -779,13 +779,10 @@ def handle_StartScanRequest():
     message_type1 = struct.pack('<I', mrtc_pb2.MessageType.MESSAGE_TYPE_START_SCAN_REQUEST)
     message_type3 = struct.pack('<I', mrtc_pb2.MessageType.MESSAGE_TYPE_TAKE_SCAN_CONTROL_RESPONSE)
     
-    global exam_token
     m1.exam_token = exam_token
     m1.scan_protocol_name = protocol_name
 
-    global scan_serv_address
-    global scan_serv_port
-    sc_socket = mrtc_func.start_scan_and_take_scan_control_messages(message_type1, message_type3, m1, m2, m3, m4, scan_serv_address, scan_serv_port)
+    sc_socket = mrtc_func.start_scan_and_take_scan_control_messages(message_type1, message_type3, m1, m2, m3, m4, scan_serv_address, scan_serv_port, tc_scan_serv_address, tc_scan_serv_port)
     scan_token = m4.scan_token
     remaining_scan_time = m4.approximate_remaining_scan_time_in_seconds
     print("Scan token: " + hex(int.from_bytes(scan_token, byteorder='big')).upper())

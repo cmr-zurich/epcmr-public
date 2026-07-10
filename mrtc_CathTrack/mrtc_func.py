@@ -10,7 +10,6 @@ import struct
 import platform
 import crc32c
 import mrtc_pb2
-import mrtc_CathTrack
 from google.protobuf import json_format
 
 #======================
@@ -174,7 +173,7 @@ def message_type_to_name(val):
 # 2. Wait for a connection from the scanner(s2)
 # 3. Receive a TakeScanControlRequest and send a response (m2 and m3 via S2)
 # 4. Receive StartScanResponse (m4 via s1)
-def start_scan_and_take_scan_control_messages(message_type1, message_type3, m1, m2, m3, m4, ip_address, port):
+def start_scan_and_take_scan_control_messages(message_type1, message_type3, m1, m2, m3, m4, ip_address, port, tc_scan_serv_address, tc_scan_serv_port):
     m1.request_token = get_request_token()
     payload = m1.SerializeToString()
     pdu = pdu_from_payload_and_message_type(payload, message_type1)
@@ -192,9 +191,9 @@ def start_scan_and_take_scan_control_messages(message_type1, message_type3, m1, 
     # We are the server (using a .bind), scanner is the client
 
     s2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s2.bind((mrtc_CathTrack.tc_scan_serv_address, mrtc_CathTrack.tc_scan_serv_port))
+    s2.bind((tc_scan_serv_address, tc_scan_serv_port))
     s2.listen()
-    print("Listening for incoming connections at: " + str(mrtc_CathTrack.tc_scan_serv_address) + ":" + str(mrtc_CathTrack.tc_scan_serv_port))
+    print("Listening for incoming connections at: " + str(tc_scan_serv_address) + ":" + str(tc_scan_serv_port))
     s3, client_address = s2.accept()
     s2.close()
     local_ip, local_port = s3.getsockname()
@@ -205,7 +204,7 @@ def start_scan_and_take_scan_control_messages(message_type1, message_type3, m1, 
     pdu2 = s1.recv(MaxDataLength)
     payload, message_type = payload_and_message_type_from_pdu(pdu2)
     if message_type == mrtc_pb2.MessageType.MESSAGE_TYPE_FAULT_RESPONSE:
-        handle_fault_message(payload, f"{client_address}:{mrtc_CathTrack.scan_control_server_port} receiving: ")
+        handle_fault_message(payload, f"{client_address}:{tc_scan_serv_port} receiving: ")
     else:
         m4.ParseFromString(payload)
         if trace_pdu:
