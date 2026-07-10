@@ -2,7 +2,7 @@
 """
 Created on Thu Jul 17 11:35:00 2025
 
-@author: dep07197
+@author: Christian Stehning / Jouke Smink, Philips Clinical Science
 """
 
 import socket
@@ -10,6 +10,7 @@ import struct
 import platform
 import crc32c
 import mrtc_pb2
+import mrtc_CathTrack
 from google.protobuf import json_format
 
 #======================
@@ -24,38 +25,7 @@ protocol_version = version_major.to_bytes(4, 'little') + version_minor.to_bytes(
 MaxDataLength = 4096  # Restricted value for test purposes, works fine but not needed
 MaxDataLength = 2147483647  # maximum value for a signed integer
 request_token = 5685        # random number for starting the request tokes which are incremented to make them different
-
-#======================================================
-# These are fixed settings for the MRTC communication
-#======================================================
-
-# PFLH 1.5T
-remote_ip_address = "192.168.113.107"
-my_ip_address = "192.168.113.108"
-
-# Herzzentrum Leipzig
-#remote_ip_address = "10.186.47.41"
-#my_ip_address = "10.186.47.66"
-
-# Demo Best
-#remote_ip_address = "130.144.173.74"
-#my_ip_address = "130.144.173.79"
-
-
-exam_card_id_path = "pySuite"
-protocol_name1 = "Survey" # Replace this by the Roadmap scan one day
-protocol_name2 = "SilentTracking"
-init_serv_address = remote_ip_address
-init_serv_port = 8174
-tc_scan_serv_address = my_ip_address
-tc_scan_serv_port = 12345
-dicom_server_address = my_ip_address
-dicom_server_port = 105
-dicom_aetitle = "AESIGNET"
-ntp_server_address = my_ip_address
-ntp_server_port = 123
-active_user = "Gyrotest"
-#active_user = "MRUser"
+database_version = "00000000-00-00"
 
 
 def get_local_time_zone_id():        
@@ -222,9 +192,9 @@ def start_scan_and_take_scan_control_messages(message_type1, message_type3, m1, 
     # We are the server (using a .bind), scanner is the client
 
     s2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s2.bind((tc_scan_serv_address, tc_scan_serv_port))
+    s2.bind((mrtc_CathTrack.tc_scan_serv_address, mrtc_CathTrack.tc_scan_serv_port))
     s2.listen()
-    print("Listening for incoming connections at: " + str(tc_scan_serv_address) + ":" + str(tc_scan_serv_port))
+    print("Listening for incoming connections at: " + str(mrtc_CathTrack.tc_scan_serv_address) + ":" + str(mrtc_CathTrack.tc_scan_serv_port))
     s3, client_address = s2.accept()
     s2.close()
     local_ip, local_port = s3.getsockname()
@@ -235,7 +205,7 @@ def start_scan_and_take_scan_control_messages(message_type1, message_type3, m1, 
     pdu2 = s1.recv(MaxDataLength)
     payload, message_type = payload_and_message_type_from_pdu(pdu2)
     if message_type == mrtc_pb2.MessageType.MESSAGE_TYPE_FAULT_RESPONSE:
-        handle_fault_message(payload, f"{client_address}:{scan_control_server_port} receiving: ")
+        handle_fault_message(payload, f"{client_address}:{mrtc_CathTrack.scan_control_server_port} receiving: ")
     else:
         m4.ParseFromString(payload)
         if trace_pdu:
