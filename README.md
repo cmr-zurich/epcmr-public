@@ -38,7 +38,7 @@ over [OpenIGTLink](http://openigtlink.org/).
 
 ### Architecture at a glance
 
-```
+``` 
 MR scanner ──(MRTC protocol)──▶  mrtc_CathTrack  ──(OpenIGTLink / pyigtl)──▶  EPCMR (Slicer)
                                   bridge & tracker                            visualization
 ```
@@ -56,6 +56,8 @@ MR scanner ──(MRTC protocol)──▶  mrtc_CathTrack  ──(OpenIGTLink / 
   server on port `18944`.
 - **`EPCMR` module** — connects as an OpenIGTLink client, renders catheters, and runs the
   RA-Flutter / PVC / FreeAngulator workflows.
+
+The technical implementation of MRTC on the MR system is not part of the Toolkit, see **Requirements**. 
 
 ---
 
