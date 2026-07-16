@@ -2,7 +2,7 @@
 
 MRTC (Magnetic Resonance Therapy Control) is an interface designed to connect Philips MR scanners with external real-time MR-guided treatment devices (such as linear accelerators, focused ultrasound systems, catheters tracking equipment or surgical robotics).
 
-<img width="489" height="367" alt="MRTC" src="https://github.com/user-attachments/assets/3cfa708d-9ef6-4894-8eab-3d67d27c2319" />
+![MRTC](./images/mrtc1.gif)
 
 ### Core Capabilities
 
@@ -17,7 +17,8 @@ MRTC (Magnetic Resonance Therapy Control) is an interface designed to connect Ph
 ### MRTC Message format
 
 * Messages exchanged between the MR scanner and the therapy control software are transported as byte sequences called Protocol Data Units or PDUs. A PDU consists of a 4-byte length field, followed by an 8-byte protocol version field, followed by a 4-byte message type field, followed by a variable-length message data field, followed by a 4-byte checksum field.
-  <img width="535" height="40" alt="MessageFormat" src="https://github.com/user-attachments/assets/0119712c-495f-441f-ae2e-ab5820216fd3" />
+
+![MRTC](./images/MessageFormat.gif)
 
 * Communication of the message data is implemented via google protobuf, which is available across all platforms (Windows/Linux/Mac) and programming languages (e.g. C, Python)
 * All field are encoded as a 32-bit unsigned integer using little-endian byte order
@@ -31,7 +32,7 @@ MRTC (Magnetic Resonance Therapy Control) is an interface designed to connect Ph
 * Response will send the same token to confirm that the response belongs to the request
 * Different message types exist, such as control messages from the therapy equipment to the MR scanner (e.g. request the start of a scan), and data messages from the MR scanner to the therapy equipment
 
-  <img width="352" height="157" alt="MessageTypes" src="https://github.com/user-attachments/assets/8cef22cd-af58-4424-8a0d-00d9dc243a22" />
+![MRTC](./images/mrtc2.gif)
 
 ### Practical Impact on Workflows
 
