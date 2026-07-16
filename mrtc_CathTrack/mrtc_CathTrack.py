@@ -45,8 +45,19 @@ import pyigtl
 
 # ====================================================================
 # This is for communication with HoloLens
-# =====================================================================
+# ====================================================================
 import socket
+
+#========================================
+# For a simple GUI
+#========================================
+import tkinter as tk
+from tkinter import filedialog, messagebox
+
+#==========================================================
+# Threading. Otherwise, this script will block everything.
+#==========================================================
+import threading
 
 # ========================================================================================================================================
 # These lists map the channel numbers onto (human-readable) identifiers. Also assign signal colors to the channels (for plotting)
@@ -126,22 +137,62 @@ udp_ip = "127.0.0.1"  # Currently localhost
 # ==================================================================================
 # Replay data from pickle file? If empty, normal MRTC communcation will be started.
 # ==================================================================================
-#replayPickleFile = ""
-replayPickleFile = r"/home/christian-stehning/MRDATA/2026_06_18_MRTC_invivo/tracking_data_2026-06-18_14-20-40_christian.pkl"
+replayPickleFile = ""
+#replayPickleFile = r"/home/christian-stehning/MRDATA/2026_06_18_MRTC_invivo/tracking_data_2026-06-18_14-20-40_christian.pkl"
 
+# ===============================================================================
+# This is where the data from the current scans will be stored (as pickle file)
+# ===============================================================================
+#pickleFilePath = r"/home/christian-stehning/MRDATA"
+pickleFilePath = r"c:\temp"
+
+# =========================================================================================================================
+# Name of the ExamCard to be pulled out of the database (Note: needs to be ín the hospital tab, in a folder called "MRTC"
+# =========================================================================================================================
+exam_card_id_path = "pySuite"
+
+# ============================================================================
+# This is the name of the scan that will be started via MRTC remote control. 
+# ============================================================================
+protocol_name = "SilentTracking"
 
 # ================================================
 # Configuration for MRTC
 # ================================================
 debug_tracking = False
 debug_mrtc = False
-database_version = "00000000-00-00"
+
+
+# PFLH 1.5T
+remote_ip_address = "192.168.113.107"
+my_ip_address = "192.168.113.108"
+
+# Herzzentrum Leipzig
+#remote_ip_address = "10.186.47.41"
+#my_ip_address = "10.186.47.66"
+
+# Demo Best
+#remote_ip_address = "130.144.173.74"
+#my_ip_address = "130.144.173.79"
+
+init_serv_address = remote_ip_address
+init_serv_port = 8174
+tc_scan_serv_address = my_ip_address
+tc_scan_serv_port = 12345
+dicom_server_address = my_ip_address
+dicom_server_port = 105
+dicom_aetitle = "AESIGNET"
+ntp_server_address = my_ip_address
+ntp_server_port = 123
+active_user = "Gyrotest"
+
+scan_serv_address = init_serv_address
+scan_serv_port = init_serv_port
 
 
 # =======================================================================
 # This function allows to create a mutable dictionary (of dictionaries)
 # It does not require any initialisation
-# I don't understand this recursive syntax either, but it works nicely.
 # =======================================================================
 def makehash():
     return defaultdict(makehash)
@@ -201,7 +252,6 @@ def findDualOrSinglePeak(rawData, voxelSizeM):
 
     peakVal = rawData[peakIdxs[1]]
     return (peakPos, peakVal, peakIdxs[1], dualPeak)
-
 
 # ===================================================================================================
 # Images are received as messages and do not require a response, so simple receive
@@ -349,7 +399,6 @@ def receive_message(s, image_m, m1, m2, m3, m4, num_images_to_set_stack_pos):
     print("Closing the connection")
     s.close()
 
-
 # ==================================================================================
 # Function to send the catheter coil positions to the HoloLens via UDP
 # ==================================================================================
@@ -363,8 +412,6 @@ def send_catheter(timestamp, catheter_id, proximal_xyz, distal_xyz, sock, udp_ip
     """
     message = f"{int(timestamp)},{catheter_id},{proximal_xyz[0]},{proximal_xyz[1]},{proximal_xyz[2]},{distal_xyz[0]},{distal_xyz[1]},{distal_xyz[2]}".encode("utf-8")
     sock.sendto(message, (udp_ip, udp_port))
-
-
 
 # ===============================================================================
 # Average position over the last N valid shots. Weight averages inverse to their
@@ -408,17 +455,15 @@ def tip_pos_ori(cath, shot, shotList, numAverages, maxAveragingDistance):
             
     return (avgTipPos, avgDirVector)
 
-
 # ====================================================================================================
 # Convert the catheter tip position and orientation into a transformation matrix that warps a model
 # of the catheter onto the corresponding position in 3Dslicer
-#=====================================================================================================
+# Reference (rotation matrix):
+# https://math.stackexchange.com/questions/1956699/getting-a-transformation-matrix-from-a-normal-vector
+# Leonhard Euler, "Problema algebraicum ob affectiones prorsus singulares memorabile", 
+# Commentatio 407 Indicis Enestoemiani, Novi Comm. Acad. Sci. Petropolitanae 15 (1770), 75–106
+# ====================================================================================================
 def pos_to_matrix(pos, dirVector):
-    # ===========================================================================================================================================
-    # References (rotation matrix)
-    # https://math.stackexchange.com/questions/1956699/getting-a-transformation-matrix-from-a-normal-vector
-    # Leonhard Euler, "Problema algebraicum ob affectiones prorsus singulares memorabile", Commentatio 407 Indicis Enestoemiani, Novi Comm. Acad. Sci. Petropolitanae 15 (1770), 75–106
-    # ===========================================================================================================================================
 
     matrix = np.eye(4)
 
@@ -498,7 +543,7 @@ def tracking_data_to_slicer(message, images, scan_names, shotList):
         # and log if this is a single- or dual peak (that is only needed for debugging, to try different algorithms)
         # ============================================================================================================================
         array_size = num_rows * num_cols
-        projection = np.frombuffer(image_m.pixel_data, dtype=np.uint16, count=array_size)
+        projection = np.frombuffer(message.pixel_data, dtype=np.uint16, count=array_size)
         projection = projection.reshape((num_rows, num_cols))
 
         # ===========================================================================================================================================
@@ -596,7 +641,9 @@ def tracking_data_to_slicer(message, images, scan_names, shotList):
                 # As per discussion on Jun 1, 2026, we will send the tip position (i.s.o. center between coils) to Slicer
                 # ===================================================================================================================
 
-                [avgTipPos, avgDirVector] = tip_pos_ori(cath, trackingShotDict, shotList, numAverages, maxAveragingDistance)                                                    
+                [avgTipPos, avgDirVector] = tip_pos_ori(cath, trackingShotDict, shotList, numAverages, maxAveragingDistance)    
+
+                print(avgTipPos)                                                
 
                 # =======================================================
                 # Send current transformation to Slicer and/or HoloLens
@@ -615,44 +662,169 @@ def tracking_data_to_slicer(message, images, scan_names, shotList):
             shotList.append(copy.deepcopy(trackingShotDict))  # A deep copy ensures that nested dictionaries or mutable objects within the dictionary are also copied, not just referenced.
 
 
-# ==============================================
-# Establish connection to slicer, if requested
-# ==============================================
+def handle_StartExamRequest():
+    
+    #===============================================
+    # Establish connection to ExamCard server
+    #===============================================
 
-if sendToSlicer:
-    # "Slicer must be enabled as client, default port for OpenIGTLink is 18944"   
-    server = pyigtl.OpenIGTLinkServer(port=18944, local_server=True)
-    server.start()
+    print("\n--- PingServiceProvider to Init Service ---\n")
+    m1 = mrtc_pb2.PingServiceProviderRequestMessage()
+    m2 = mrtc_pb2.PingServiceProviderResponseMessage()
+    message_type = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_PING_SERVICE_PROVIDER_REQUEST)
+    mrtc_func.send_and_receive_message(message_type, m1, m2, init_serv_address, init_serv_port)
+    incarnation_token = m2.incarnation_token
+    print("Incarnation token: "+ hex(int.from_bytes(incarnation_token, byteorder="big")).upper())
 
-# ==============================================
-# Establish connection to HoloLens, if requested
-# ==============================================
+    # SyncSystemConfigRequest to the Init Service
+    print("\n--- SyncSystemConfigRequest to the Init Service ---\n")
+    m1 = mrtc_pb2.SyncSystemConfigRequestMessage()
+    m2 = mrtc_pb2.SyncSystemConfigResponseMessage()
+    message_type = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_SYNC_SYSTEM_CONFIG_REQUEST)
+    m1.allow_mr_research_features = True
+    m1.ntp_service_address.host_name_or_ip_address = ntp_server_address
+    m1.ntp_service_address.port_number = ntp_server_port
+    dicom_storage_scp_addresses = m1.dicom_storage_scp_addresses.add()
+    dicom_storage_scp_addresses.tcp_address.host_name_or_ip_address = dicom_server_address
+    dicom_storage_scp_addresses.tcp_address.port_number = dicom_server_port
+    dicom_storage_scp_addresses.ae_title = dicom_aetitle
+    m1.scan_control_service_address.host_name_or_ip_address = tc_scan_serv_address
+    m1.scan_control_service_address.port_number = tc_scan_serv_port
+    m1.local_windows_time_zone_id = mrtc_func.get_local_time_zone_id()
+    m1.philips_exam_card_database_version = mrtc_func.database_version
+    mrtc_func.send_and_receive_message(message_type, m1, m2, init_serv_address, init_serv_port)
+    config_token = m2.config_token
+    exam_serv_address = m2.exam_service_address.host_name_or_ip_address
+    exam_serv_port = m2.exam_service_address.port_number
+    user_serv_address = m2.user_service_address.host_name_or_ip_address
+    user_serv_port = m2.user_service_address.port_number
+    global scan_serv_address 
+    scan_serv_address = m2.scan_service_address.host_name_or_ip_address
+    global scan_serv_port
+    scan_serv_port = m2.scan_service_address.port_number
+    print("Config token: " + hex(int.from_bytes(config_token, byteorder="big")).upper())
+    print(f"Exam Service: {exam_serv_address}:{exam_serv_port}")
+    print(f"User Service: {user_serv_address}:{user_serv_port}")
+    print(f"Scan Service: {scan_serv_address}:{scan_serv_port}")
 
-if sendToHoloLens:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    # SyncActiveUserRequest to the User Service
+    print("\n--- SyncActiveUserRequest to the User Service ---\n")
+    m1 = mrtc_pb2.SyncActiveUserRequestMessage()
+    m2 = mrtc_pb2.SyncActiveUserResponseMessage()
+    message_type = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_SYNC_ACTIVE_USER_REQUEST)
+    m1.user_id = active_user
+    mrtc_func.send_and_receive_message(message_type, m1, m2, user_serv_address, user_serv_port)
+    user_token = m2.user_token
+    print("User token: " + hex(int.from_bytes(user_token, byteorder="big")).upper())
 
-# ==================================================
-# Keep a flag wether we have seen a valid position,
-# and the last known "good" position
-# ==================================================
+    # GetHospitalExamCardsInfoRequest to the Init Service
+    print("\n--- GetHospitalExamCardsInfoRequest to the Init Service ---\n")
+    m1 = mrtc_pb2.GetHospitalExamCardsInfoRequestMessage()
+    m2 = mrtc_pb2.GetHospitalExamCardsInfoResponseMessage()
+    message_type = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_GET_HOSPITAL_EXAM_CARDS_INFO_REQUEST)
+    mrtc_func.send_and_receive_message(message_type, m1, m2, init_serv_address, init_serv_port)
 
-validPositionSeen = {}
-lastGoodAvgTipPos = {}
-lastGoodAvgDirVector = {}
+    for exam_card in m2.exam_cards:
+        # Access each item in the repeated field
+        print(f"ExamCard: {exam_card.id.path} (signature: {exam_card.id.signature})")
+        for scan_protocol in exam_card.scan_protocols:
+            if scan_protocol.remote_controllable:
+                print(f"    - {scan_protocol.name:40} (MRTC enabled)")
+            else:
+                print(f"    - {scan_protocol.name:40}")
+    
+    # StartExamRequest to the Exam Service
+    print("\n--- StartExamRequest to the Exam Service ---\n")
+    m1 = mrtc_pb2.StartExamRequestMessage()
+    m2 = mrtc_pb2.StartExamResponseMessage()
+    message_type = struct.pack('<I', mrtc_pb2.MessageType.MESSAGE_TYPE_START_EXAM_REQUEST)
+    m1.config_token = config_token
+    m1.user_token = user_token
+    m1.patient_data.patient_name = str(patientName.get())
+    m1.patient_data.registration_id = str(studyID.get())
+    m1.patient_data.patient_weight_kg = int(weight.get())
+    
+    date_object = datetime.strptime(str(dob.get()), "%d.%m.%Y") 
+    gender = selected_gender.get()
+    gender_dict = {"M" : mrtc_pb2.GENDER_MALE,  "F" : mrtc_pb2.GENDER_FEMALE, "P" : mrtc_pb2.GENDER_PHANTOM_OR_OTHER}
+    m1.patient_data.gender = gender_dict[gender]
+    
+    if gender == "F":
+        m1.patient_data.pregnancy_status = mrtc_pb2.PREGNANCY_STATUS_NOT_PREGNANT        
+    
+    m1.patient_data.date_of_birth.year = date_object.year
+    m1.patient_data.date_of_birth.month = date_object.month
+    m1.patient_data.date_of_birth.day = date_object.day
+    m1.therapy_mode = mrtc_pb2.TherapyMode.THERAPY_MODE_RESEARCH
+    m1.patient_position = mrtc_pb2.PatientPosition.PATIENT_POSITION_HEAD_FIRST_SUPINE
+    m1.exam_card_id.repository = mrtc_pb2.ExamCardRepository.EXAM_CARD_REPOSITORY_HOSPITAL_MRTC_FOLDER
+    m1.exam_card_id.path = exam_card_id_path
+    m1.exam_card_id.signature = b''
+    mrtc_func.send_and_receive_message(message_type, m1, m2, exam_serv_address, exam_serv_port)
+    global exam_token 
+    exam_token = m2.exam_token
+    print("Exam token: " + hex(int.from_bytes(exam_token, byteorder='big')).upper())
+    
+    # Enable start tracking button
+    startTrackingButton.config(state="normal")
+    
+    
+    
 
-for cath in caths:
-    validPositionSeen[cath] = False
-    lastGoodAvgTipPos[cath] = np.array([0.0, 0.0, 0.0])
-    lastGoodAvgDirVector[cath] = np.array([1.0, 0.0, 0.0])
+def handle_StartScanRequest():
+    m1 = mrtc_pb2.StartScanRequestMessage()
+    m2 = mrtc_pb2.TakeScanControlRequestMessage()
+    m3 = mrtc_pb2.TakeScanControlResponseMessage()
+    m4 = mrtc_pb2.StartScanResponseMessage()
+    message_type1 = struct.pack('<I', mrtc_pb2.MessageType.MESSAGE_TYPE_START_SCAN_REQUEST)
+    message_type3 = struct.pack('<I', mrtc_pb2.MessageType.MESSAGE_TYPE_TAKE_SCAN_CONTROL_RESPONSE)
+    
+    m1.exam_token = exam_token
+    m1.scan_protocol_name = protocol_name
+
+    sc_socket = mrtc_func.start_scan_and_take_scan_control_messages(message_type1, message_type3, m1, m2, m3, m4, scan_serv_address, scan_serv_port, tc_scan_serv_address, tc_scan_serv_port)
+    scan_token = m4.scan_token
+    remaining_scan_time = m4.approximate_remaining_scan_time_in_seconds
+    print("Scan token: " + hex(int.from_bytes(scan_token, byteorder='big')).upper())
+    print(f"Remaining scan time is {round(remaining_scan_time)} seconds")
 
 
-if replayPickleFile:
+    # Receive ImageData from the Scan service
+    print("\n--- Receive ImageData from the Scan service ---")
+    image_m = mrtc_pb2.ImageDataMessage()
+    m1 = mrtc_pb2.ReleaseScanControlRequestMessage()
+    m2 = mrtc_pb2.ReleaseScanControlResponseMessage()
+    m3 = mrtc_pb2.SetStackPositionsRequestMessage()
+    m4 = mrtc_pb2.SetStackPositionsResponseMessage()
+    threading.Thread(target=receive_message, args=(sc_socket, image_m, m1, m2, m3, m4, 2), daemon=True).start()
+
+
+def handle_ReplayScanRequest():
     # ==============================================
     # Load MR-data from a pre-recorded pickle file
     # ==============================================
-    f = open(replayPickleFile, "rb")
-    shotList = pickle.load(f)
+    
+    try:
+        # Open file dialog and allow only text files or all files
+        file_path = filedialog.askopenfilename(
+            title="Select a file",
+            filetypes=[("Pickle files", "*.pkl"), ("All Files", "*.*")]
+        )
 
+        # If user cancels, file_path will be empty
+        if not file_path:
+            messagebox.showinfo("No Selection", "No file was selected.")
+            return
+
+        # Read and display file content
+        with open(file_path, "rb") as file:
+            shotList = pickle.load(file)
+
+    except FileNotFoundError:
+        messagebox.showerror("Error", "The selected file could not be found.")
+    except Exception as e:
+        messagebox.showerror("Error", f"An unexpected error occurred:\n{e}")
+        
     # In a fist round, we have to add the "distance to last shot" entry, because it might not yet be present in the recorded data
     for cath in shotList[0].keys():
         shotList[0][cath]["distanceToLastShot"] = 0
@@ -675,155 +847,122 @@ if replayPickleFile:
             # =======================================================
             # Send current transformation to Slicer and/or HoloLens
             # =======================================================
-            if sendToSlicer and validPositionSeen[cath]:
+            if sendToSlicer:
                 transform_message = pyigtl.TransformMessage(pos_to_matrix(avgTipPos, avgDirVector), device_name=cath + "_TF", timestamp=time())
                 transform_message.header_version = 2
                 transform_message.metadata = {"valid": str(curShot[cath]["valid"]), "tipPos": str(avgTipPos.tolist())}                
                 server.send_message(transform_message)
                 sleep(0.05)
 
-else:
-    # ===================================================
-    # The actual MRTC communication starts here
-    # ===================================================
 
-    # PingServiceProvider to Init Service
-    print("\n--- PingServiceProvider to Init Service ---\n")
-    m1 = mrtc_pb2.PingServiceProviderRequestMessage()
-    m2 = mrtc_pb2.PingServiceProviderResponseMessage()
-    message_type = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_PING_SERVICE_PROVIDER_REQUEST)
-    mrtc_func.send_and_receive_message(message_type, m1, m2, mrtc_func.init_serv_address, mrtc_func.init_serv_port)
-    incarnation_token = m2.incarnation_token
-    print("Incarnation token: "+ hex(int.from_bytes(incarnation_token, byteorder="big")).upper())
 
-    # SyncSystemConfigRequest to the Init Service
-    print("\n--- SyncSystemConfigRequest to the Init Service ---\n")
-    m1 = mrtc_pb2.SyncSystemConfigRequestMessage()
-    m2 = mrtc_pb2.SyncSystemConfigResponseMessage()
-    message_type = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_SYNC_SYSTEM_CONFIG_REQUEST)
-    m1.allow_mr_research_features = True
-    m1.ntp_service_address.host_name_or_ip_address = mrtc_func.ntp_server_address
-    m1.ntp_service_address.port_number = mrtc_func.ntp_server_port
-    dicom_storage_scp_addresses = m1.dicom_storage_scp_addresses.add()
-    dicom_storage_scp_addresses.tcp_address.host_name_or_ip_address = mrtc_func.dicom_server_address
-    dicom_storage_scp_addresses.tcp_address.port_number = mrtc_func.dicom_server_port
-    dicom_storage_scp_addresses.ae_title = mrtc_func.dicom_aetitle
-    m1.scan_control_service_address.host_name_or_ip_address = mrtc_func.tc_scan_serv_address
-    m1.scan_control_service_address.port_number = mrtc_func.tc_scan_serv_port
-    m1.local_windows_time_zone_id = mrtc_func.get_local_time_zone_id()
-    m1.philips_exam_card_database_version = database_version
-    mrtc_func.send_and_receive_message(message_type, m1, m2, mrtc_func.init_serv_address, mrtc_func.init_serv_port)
-    config_token = m2.config_token
-    exam_serv_address = m2.exam_service_address.host_name_or_ip_address
-    exam_serv_port = m2.exam_service_address.port_number
-    user_serv_address = m2.user_service_address.host_name_or_ip_address
-    user_serv_port = m2.user_service_address.port_number
-    scan_serv_address = m2.scan_service_address.host_name_or_ip_address
-    scan_serv_port = m2.scan_service_address.port_number
-    print("Config token: " + hex(int.from_bytes(config_token, byteorder="big")).upper())
-    print(f"Exam Service: {exam_serv_address}:{exam_serv_port}")
-    print(f"User Service: {user_serv_address}:{user_serv_port}")
-    print(f"Scan Service: {scan_serv_address}:{scan_serv_port}")
+# ==================================================
+# Init flags wether we have seen a valid position,
+# and the last known "good" position
+# ==================================================
 
-    # SyncActiveUserRequest to the User Service
-    print("\n--- SyncActiveUserRequest to the User Service ---\n")
-    m1 = mrtc_pb2.SyncActiveUserRequestMessage()
-    m2 = mrtc_pb2.SyncActiveUserResponseMessage()
-    message_type = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_SYNC_ACTIVE_USER_REQUEST)
-    m1.user_id = mrtc_func.active_user
-    mrtc_func.send_and_receive_message(message_type, m1, m2, user_serv_address, user_serv_port)
-    user_token = m2.user_token
-    print("User token: " + hex(int.from_bytes(user_token, byteorder="big")).upper())
+validPositionSeen = {}
+lastGoodAvgTipPos = {}
+lastGoodAvgDirVector = {}
 
-    # GetHospitalExamCardsInfoRequest to the Init Service
-    print("\n--- GetHospitalExamCardsInfoRequest to the Init Service ---\n")
-    m1 = mrtc_pb2.GetHospitalExamCardsInfoRequestMessage()
-    m2 = mrtc_pb2.GetHospitalExamCardsInfoResponseMessage()
-    message_type = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_GET_HOSPITAL_EXAM_CARDS_INFO_REQUEST)
-    mrtc_func.send_and_receive_message(message_type, m1, m2, mrtc_func.init_serv_address, mrtc_func.init_serv_port)
-    
-    for exam_card in m2.exam_cards:
-        # Access each item in the repeated field
-        print(f"ExamCard: {exam_card.id.path} (signature: {exam_card.id.signature})")
-        for scan_protocol in exam_card.scan_protocols:
-            if scan_protocol.remote_controllable:
-                print(f"    - {scan_protocol.name:40} (MRTC enabled)")
-            else:
-                print(f"    - {scan_protocol.name:40}")
+for cath in caths:
+    validPositionSeen[cath] = False
+    lastGoodAvgTipPos[cath] = np.array([0.0, 0.0, 0.0])
+    lastGoodAvgDirVector[cath] = np.array([1.0, 0.0, 0.0])
 
-    # StartExamRequest to the Exam Service
-    print("\n--- StartExamRequest to the Exam Service ---\n")
-    m1 = mrtc_pb2.StartExamRequestMessage()
-    m2 = mrtc_pb2.StartExamResponseMessage()
-    message_type = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_START_EXAM_REQUEST)
-    m1.config_token = config_token
-    m1.user_token = user_token
-    m1.patient_data.patient_name = "MRTC test Leipzig"
-    m1.patient_data.registration_id = "007"
-    m1.patient_data.date_of_birth.year = 1975
-    m1.patient_data.date_of_birth.month = 12
-    m1.patient_data.date_of_birth.day = 23
-    m1.patient_data.gender = mrtc_pb2.Gender.GENDER_MALE
-    m1.patient_data.patient_weight_kg = 90
-    m1.therapy_mode = mrtc_pb2.TherapyMode.THERAPY_MODE_RESEARCH
-    m1.patient_position = mrtc_pb2.PatientPosition.PATIENT_POSITION_HEAD_FIRST_SUPINE
-    m1.exam_card_id.repository = (mrtc_pb2.ExamCardRepository.EXAM_CARD_REPOSITORY_HOSPITAL_MRTC_FOLDER)
-    m1.exam_card_id.path = mrtc_func.exam_card_id_path
-    m1.exam_card_id.signature = b""
-    mrtc_func.send_and_receive_message(message_type, m1, m2, exam_serv_address, exam_serv_port)
-    exam_token = m2.exam_token
-    print("Exam token: " + hex(int.from_bytes(exam_token, byteorder="big")).upper())
 
-    # ==========================================================================================================
-    # StartScanRequest to the Scan Service, with a tracking scan with real-time image sending
-    # Put this into a loop. We may have to start silent tracking over and over (without closing the ExamCard)
-    #===========================================================================================================
+# ==============================================
+# Establish connection to slicer, if requested
+# ==============================================
 
-    keyIn = ""
+if sendToSlicer:
+    # "Slicer must be enabled as client, default port for OpenIGTLink is 18944"   
+    server = pyigtl.OpenIGTLinkServer(port=18944, local_server=True)
+    server.start()
 
-    while keyIn != "s" and keyIn != "S":
-        protocol_name = "SilentTracking"
-        m1 = mrtc_pb2.StartScanRequestMessage()
-        m2 = mrtc_pb2.TakeScanControlRequestMessage()
-        m3 = mrtc_pb2.TakeScanControlResponseMessage()
-        m4 = mrtc_pb2.StartScanResponseMessage()
-        message_type1 = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_START_SCAN_REQUEST)
-        message_type3 = struct.pack("<I", mrtc_pb2.MessageType.MESSAGE_TYPE_TAKE_SCAN_CONTROL_RESPONSE)
-        m1.exam_token = exam_token
-        m1.scan_protocol_name = protocol_name
+# ==============================================
+# Establish connection to HoloLens, if requested
+# ==============================================
 
-        sc_socket = mrtc_func.start_scan_and_take_scan_control_messages(message_type1, message_type3, m1, m2, m3, m4, scan_serv_address, scan_serv_port)
-        scan_token = m4.scan_token
-        remaining_scan_time = m4.approximate_remaining_scan_time_in_seconds
-        print("Scan token: " + hex(int.from_bytes(scan_token, byteorder="big")).upper())
-        print(f"Remaining scan time is {round(remaining_scan_time)} seconds")
+if sendToHoloLens:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-        # Receive ImageData from the Scan service
-        print("\n--- Receive ImageData from the Scan service ---")
-        image_m = mrtc_pb2.ImageDataMessage()
-        m1 = mrtc_pb2.ReleaseScanControlRequestMessage()
-        m2 = mrtc_pb2.ReleaseScanControlResponseMessage()
-        m3 = mrtc_pb2.SetStackPositionsRequestMessage()
-        m4 = mrtc_pb2.SetStackPositionsResponseMessage()
-        receive_message(sc_socket, image_m, m1, m2, m3, m4, 2)
-        keyIn = input("Press Enter to restart tracking scan. Press ""s"" key + Enter to stop the loop: ")
 
-    # ==================================
-    # Save data into a pickle file
-    # ==================================
-    now = datetime.now()
-    file = f"$home/tracking_data_{now.strftime('%Y-%m-%d_%H-%M-%S')}.pkl"
-    f = open(file, "wb")
-    pickle.dump(shotList, f)
-    f.close()
-    print(f"Tracking data were saved to {file}")
+# =========================
+# Set up the tkinter UI
+# =========================
+root = tk.Tk()
+root.title("MRTC catheter tracking")
+# Create a main frame to act as a canvas for buttons
+main_frame = tk.Frame(root, padx=20, pady=20)  # Add padding around the frame
+main_frame.pack(fill="both", expand=True)  # Expand to fill the window
+
+# Define button options
+button_options = {
+    "width": 30,  # Set a fixed width for uniform button size
+    "anchor": "w",  # Align text to the left
+    "padx": 5,     # Add padding within each button
+    "pady": 5      # Add vertical padding within each button
+}
+
+# Add fields for Patient name, date of birth, study ID, weight and gender
+tk.Label(main_frame, text="Patient name").grid(row=0, column=0, sticky="w", pady=5)
+patientName = tk.Entry(main_frame, width=35)
+patientName.insert(0, "Phantomas")
+patientName.grid(row=1, column=0, sticky="w", pady=5)
+
+
+tk.Label(main_frame, text="DOB").grid(row=0, column=1, sticky="w", pady=5)
+dob = tk.Entry(main_frame, width=10)
+dob.insert(0,"23.12.1975")
+dob.grid(row=1, column=1, sticky="w", pady=5)
+
+tk.Label(main_frame, text="Study ID").grid(row=2, column=0, sticky="w", pady=5)
+studyID = tk.Entry(main_frame, width=35)
+studyID.insert(0,"test001")
+studyID.grid(row=3, column=0, sticky="w", pady=5)
+
+
+tk.Label(main_frame, text="Weight (kg)").grid(row=2, column=1, sticky="w", pady=5)
+weight = tk.Entry(main_frame, width=10)
+weight.insert(0,"80")
+weight.grid(row=3, column=1, sticky="w", pady=5)
+
+selected_gender = tk.StringVar()
+genders = (('Male', 'M'), ('Female', 'F'), ('Phantom', 'P'))
+
+for idx, gen in enumerate(genders):
+    r = tk.Radiobutton(main_frame, text=gen[0], value=gen[1], variable = selected_gender)
+    r.grid(row=4 + idx, column=1, sticky="w", pady=5)
+selected_gender.set(genders[-1][1])
+
+createExamButton = tk.Button(main_frame, text="Create Exam", command=handle_StartExamRequest, **button_options)
+createExamButton.grid(row=4, column=0, sticky="w", pady=5)
+startTrackingButton = tk.Button(main_frame, text="Start Tracking", command=handle_StartScanRequest, **button_options, state = "disabled")
+startTrackingButton.grid(row=5, column=0, sticky="w", pady=5)
+replayTrackingButton = tk.Button(main_frame, text="Replay Tracking", command=handle_ReplayScanRequest, **button_options)
+replayTrackingButton.grid(row=6, column=0, sticky="w", pady=5)
+root.mainloop()
+
+
+
+
+
+# ==================================
+# Save data into a pickle file
+# ==================================
+now = datetime.now()
+file = f"{pickleFilePath}/tracking_data_{now.strftime('%Y-%m-%d_%H-%M-%S')}.pkl"
+f = open(file, "wb")
+pickle.dump(shotList, f)
+f.close()
+print(f"Tracking data were saved to {file}")
     
 # =================================
 # Close server (if needed)
 #==================================
     
 if "server" in locals() and server is not None:
-    import threading
     print("Safely shutting down pyigtl connections...")
     # WinError 10038: Occurs because the main thread destroys the network
     # socket while a background thread is still actively polling it for data.

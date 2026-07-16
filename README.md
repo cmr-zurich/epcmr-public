@@ -1,6 +1,8 @@
-<div align="center">
 
-# EPCMR — Electrophysiology CMR Toolkit
+
+<div align="center">
+<img src="./Resources/Icons/EPCMR_128.png" alt="EPCMR logo" width="128" />
+<h1> EPCMR — Electrophysiology CMR Toolkit</h1>
 
 **A multi-procedure EP-CMR suite for 3D Slicer**, supporting Right-Atrial (RA) Flutter
 and Pulmonary-Vein / PVC ablation workflows with real-time MR-tracked catheter guidance.
@@ -8,7 +10,6 @@ and Pulmonary-Vein / PVC ablation workflows with real-time MR-tracked catheter g
 ![Category](https://img.shields.io/badge/3D%20Slicer-Cardiac-blue)
 ![License](https://img.shields.io/badge/license-BSD--3--Clause-green)
 ![Status](https://img.shields.io/badge/status-research%20software-orange)
-
 </div>
 
 > ⚠️ **Research software only.** EPCMR is *not* a medical device and is *not* cleared
@@ -24,6 +25,8 @@ electrophysiology (EP) cardiac-MR workflows into Slicer. It combines pre-procedu
 anatomy, interactive angulation, and **live MR-tracked catheter visualization** streamed
 over [OpenIGTLink](http://openigtlink.org/).
 
+<img src="./docs/images/EPCMR_Teaser.gif" width="65%" height="65%"/>
+
 ### Features
 
 - **RA Flutter** — right-atrial flutter mapping and ablation support.
@@ -35,7 +38,7 @@ over [OpenIGTLink](http://openigtlink.org/).
 
 ### Architecture at a glance
 
-```
+``` 
 MR scanner ──(MRTC protocol)──▶  mrtc_CathTrack  ──(OpenIGTLink / pyigtl)──▶  EPCMR (Slicer)
                                   bridge & tracker                            visualization
 ```
@@ -54,6 +57,8 @@ MR scanner ──(MRTC protocol)──▶  mrtc_CathTrack  ──(OpenIGTLink / 
 - **`EPCMR` module** — connects as an OpenIGTLink client, renders catheters, and runs the
   RA-Flutter / PVC / FreeAngulator workflows.
 
+The technical implementation of MRTC on the MR system is not part of the Toolkit, see **Requirements**. 
+
 ---
 
 ## Requirements
@@ -63,6 +68,7 @@ MR scanner ──(MRTC protocol)──▶  mrtc_CathTrack  ──(OpenIGTLink / 
 - **`pyigtl`** — auto-installed into Slicer's Python on first launch (the module prompts
   and installs via `pip` if missing).
 - For the `mrtc_CathTrack` bridge (standalone Python): `protobuf`, `crc32c`.
+- Real-time tracking requires the [MRTC system](docs/MRTC_briefly_explained.md) to be installed on the MR system. MRTC is a research functionality and requires a research contract. Please contact your local Philips Clinical Scientist for support.
 
 ---
 
@@ -91,6 +97,16 @@ You can explore the full workflow without a scanner using the bundled example da
    [`ExampleData/replay_jsonlines/igtl_stream.jsonl`](ExampleData/replay_jsonlines/)
    (or the recorded tracking pickle).
 3. Start replay to see catheter transforms drive the scene.
+
+---
+
+## Tutorials
+
+Several video tutorials are available demonstrating catheter navigation and voltage mapping:
+
+1. [`Tutorial Video 1`](docs/videos/TutorialVideo_01_Captions.mp4) : Scene Setup & Real-time Catheter Navigation
+2. [`Tutorial Video 2`](docs/videos/TutorialVideo_02_Captions.mp4) : Activation Time Mapping
+3. [`Tutorial Video 3`](docs/videos/TutorialVideo_03_Captions.mp4) : Voltage Mapping
 
 ---
 
