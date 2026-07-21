@@ -9,7 +9,6 @@ import vtk
 
 from EPCMRLib.EPCMRParameterNode import EPCMRParameterNode
 
-
 VTK_VERSION = (vtk.vtkVersion.GetVTKMajorVersion(), vtk.vtkVersion.GetVTKMinorVersion())
 
 
@@ -397,6 +396,8 @@ class SceneManager:
     def normalizeAnatomyAppearance(self, modelNode):
         """
         Normalize anatomy appearance for consistent lighting.
+        Rim effect is provided by lighting only; GLSL shader removed for this build.
+
         """
         if not modelNode:
             return
@@ -434,8 +435,6 @@ class SceneManager:
         polyData.DeepCopy(normals.GetOutput())
         polyData.Modified()
         modelNode.Modified()
-
-        self._ensureCARTORimShader(dn)
 
     # ------------------------------------------------------------------
     # Voltage mapping on RA clone
@@ -488,8 +487,6 @@ class SceneManager:
         polyData.DeepCopy(normals.GetOutput())
         polyData.Modified()
         raCloneNode.Modified()
-
-        self._ensureCARTORimShader(dn)
 
     # ------------------------------------------------------------------
     # Renderer + lighting
@@ -597,77 +594,6 @@ class SceneManager:
                 self.normalizeAnatomyAppearance(node)
 
         self._lightingInstalled = True
-
-    # ------------------------------------------------------------------
-    # CARTO rim shader
-    # ------------------------------------------------------------------
-    def _ensureCARTORimShader(self, displayNode):
-        """
-        Install a CARTO-style rim-lighting shader on a model display node.
-        """
-        if not displayNode:
-            return
-
-        if getattr(displayNode, "_cartoShaderInstalled", False):
-            try:
-                sp = displayNode.GetShaderProperty()
-                if not sp or not sp.GetFragmentShaderCode():
-                    displayNode._cartoShaderInstalled = False
-            except AttributeError:
-                displayNode._cartoShaderInstalled = False
-
-        if getattr(displayNode, "_cartoShaderInstalled", False):
-            return
-
-        try:
-            sp = displayNode.GetShaderProperty()
-        except AttributeError:
-            return
-
-        if not sp:
-            return
-
-        fragment = """
-            //VTK::Light::Impl
-
-            vec3 baseColor = fragOutput0.rgb;
-
-            vec3 N = normalize(normalVCVSOutput);
-            vec3 V = normalize(-vertexVC.xyz);
-
-            vec3 L = normalize(-lightDirectionVC[0]);
-
-            float ndotl = max(dot(N, L), 0.0);
-
-            float rimInner = 1.0 - max(dot(N, V), 0.0);
-            rimInner = pow(rimInner, 1.9);
-
-            vec3 rimInnerColor = vec3(0.55, 0.65, 1.0);
-
-            float rimOuter = 1.0 - max(dot(N, V), 0.0);
-            rimOuter = pow(rimOuter, 0.8);
-
-            vec3 rimOuterColor = vec3(0.60, 0.75, 1.0);
-
-            vec3 lit = baseColor * (0.20 + 0.60 * ndotl);
-
-            vec3 innerContribution = rimInner * rimInnerColor * 1.75;
-
-            vec3 outerContribution = rimOuter * rimOuterColor * 0.65;
-
-            vec3 finalColor = lit + innerContribution + outerContribution;
-
-            fragOutput0 = vec4(finalColor, fragOutput0.a);
-        """
-
-        sp.AddFragmentShaderReplacement(
-            "//VTK::Light::Impl",
-            True,
-            fragment,
-            False,
-        )
-
-        displayNode._cartoShaderInstalled = True
 
     # ------------------------------------------------------------------
     # Scalar bar helpers (dual legends)
