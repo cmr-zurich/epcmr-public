@@ -169,23 +169,61 @@ class SceneManager:
         if not dn:
             return
 
-        dn.SetAmbient(0.50)
-        dn.SetDiffuse(0.40)
+        # === CRITICAL FIX FOR SELF-LIT EMISSIVE QUALITY ===
+        # Turning ScalarVisibility OFF breaks the VTK internal hardware link that
+        # forces scene light tracking. This allows the catheter to become 100% self-lit.
+        dn.SetScalarVisibility(False)
+        dn.SetLighting(False)  # Turn off scene lighting equations completely
 
-        dn.SetSpecular(0.15)
-        dn.SetSpecularPower(20)
+        # === REAL-TIME CARTO LIGHTING: Pure Emissive Performance ===
+        dn.SetAmbient(1.00)  # 100% Self-illumination creates a brilliant, vibrant neon baseline
+        dn.SetDiffuse(0.00)  # Completely remove directional shadows (prevents dirty/muddy undersides)
+        dn.SetSpecular(0.00)  # Remove harsh reflections to keep the color purely saturated
+        dn.SetPower(1)
 
+        # === ELECTRODE SEAMS: High-speed edge definition ===
         dn.SetEdgeVisibility(True)
-        dn.SetEdgeColor(1.0, 1.0, 1.0)
-        dn.SetLineWidth(1.2)
+        dn.SetEdgeColor(0.10, 0.10, 0.10)  # Sharp dark seams distinctly separate electrode bands
+        dn.SetLineWidth(1.5)  # Crisp, lightweight separation lines
 
         dn.SetBackfaceCulling(False)
+
+        # === FIXED CARTO VISIBILITY: Force Catheters to Render Over Internal Shadows ===
+        # Explicitly configure the backend graphics card mappers across all 3D viewports
+        # to ensure that raw emissive vectors are drawn without shadow interference.
+        try:
+            lm = slicer.app.layoutManager()
+            if lm:
+                for i in range(lm.threeDViewCount):
+                    threeDWidget = lm.threeDWidget(i)
+                    if not threeDWidget:
+                        continue
+                    renderer = threeDWidget.threeDView().renderWindow().GetRenderers().GetFirstRenderer()
+                    if not renderer:
+                        continue
+
+                    props = renderer.GetViewProps()
+                    props.InitTraversal()
+                    p = props.GetNextProp()
+                    while p:
+                        if hasattr(p, "GetMapper"):
+                            m = p.GetMapper()
+                            if m and m.GetInput() == modelNode.GetPolyData():
+                                m.SetLighting(False)  # Force drop lighting calculations on the GPU mapper
+                                m.SetColorModeToDirectScalars()
+                                m.ScalarVisibilityOff()  # Wipe out lighting-enforced scalar array paths
+                        p = props.GetNextProp()
+        except Exception:
+            pass
 
         if is_vtk_at_least(9, 3):
             try:
                 dn.SetInterpolationToPhong()
             except AttributeError:
                 pass
+
+        # Flush changes instantly to the GPU renderer with zero geometric overhead
+        slicer.util.forceRenderAllViews()
 
     # ------------------------------------------------------------------
     # Sascha's Rainbow (activation CTF)
@@ -397,7 +435,6 @@ class SceneManager:
         """
         Normalize anatomy appearance for consistent lighting.
         Rim effect is provided by lighting only; GLSL shader removed for this build.
-
         """
         if not modelNode:
             return
@@ -408,18 +445,25 @@ class SceneManager:
             return
 
         dn.SetScalarVisibility(False)
-        dn.SetBackfaceCulling(False)
 
-        dn.SetAmbient(0.20)
-        dn.SetDiffuse(0.80)
+        # Lock front-facing triangulation only to yield the clean glass boundary profile
+        dn.SetBackfaceCulling(True)
+
+        # EXACT MATERIAL TRAITS: Extracted directly from your validated layout setup
+        dn.SetAmbient(0.45)  # High baseline glow color saturation
+        dn.SetDiffuse(0.85)  # Strong directional shadow tracking
+        dn.SetSpecular(0.10)  # Soft plastic/glass surface sheen
+        dn.SetPower(10)  # Tight reflection highlight spot-scaling
+        dn.SetOpacity(0.60)  # Translucent shell layering value
+
         dn.SetLighting(True)
         dn.SetShading(True)
 
-        if is_vtk_at_least(9, 3):
-            try:
-                dn.SetInterpolationToPhong()
-            except AttributeError:
-                pass
+        # Smooth out polygons smoothly across the edge normals
+        try:
+            dn.SetInterpolationToGouraud()
+        except AttributeError:
+            pass
 
         polyData = modelNode.GetPolyData()
         if not polyData:
@@ -430,6 +474,8 @@ class SceneManager:
         normals.SplittingOff()
         normals.ConsistencyOn()
         normals.AutoOrientNormalsOn()
+        normals.ComputePointNormalsOn()
+        normals.ComputeCellNormalsOff()
         normals.Update()
 
         polyData.DeepCopy(normals.GetOutput())
@@ -542,41 +588,56 @@ class SceneManager:
             if not renderer:
                 continue
 
-            # Slightly boost default head light if present
+            # Remove all existing lights to prevent double-stacking on cold startup
+            lights = renderer.GetLights()
+            lights.InitTraversal()
+            existingLights = []
+            l = lights.GetNextItem()
+            while l:
+                existingLights.append(l)
+                l = lights.GetNextItem()
+            for l in existingLights:
+                try:
+                    renderer.RemoveLight(l)
+                except:
+                    pass
+
+            # Remove default headlight
             lights = renderer.GetLights()
             lights.InitTraversal()
             head = lights.GetNextItem()
             if head:
-                head.SetIntensity(1.15)
+                try:
+                    renderer.RemoveLight(head)
+                except:
+                    pass
 
             viewLights = []
 
-            rim = vtk.vtkLight()
-            rim.SetLightTypeToSceneLight()
-            rim.SetPosition(-140, -310, 210)
-            rim.SetFocalPoint(0, 0, 0)
-            rim.SetColor(0.55, 0.65, 1.00)
-            rim.SetIntensity(0.40)
-            renderer.AddLight(rim)
-            viewLights.append(rim)
+            # Instantiate the official vtkLightKit to establish the permanent 'Balanced' profile
+            lightKit = vtk.vtkLightKit()
 
-            fill = vtk.vtkLight()
-            fill.SetLightTypeToSceneLight()
-            fill.SetPosition(0, 300, 120)
-            fill.SetFocalPoint(0, 0, 0)
-            fill.SetColor(1.00, 0.85, 0.70)
-            fill.SetIntensity(0.30)
-            renderer.AddLight(fill)
-            viewLights.append(fill)
+            # Key Light Configurations (Extracted directly from your layout screenshot)
+            lightKit.SetKeyLightIntensity(1.50)
+            lightKit.SetKeyLightWarmth(0.60)
+            lightKit.SetKeyLightElevation(70.0)
+            lightKit.SetKeyLightAzimuth(10.0)
 
-            cat = vtk.vtkLight()
-            cat.SetLightTypeToSceneLight()
-            cat.SetPosition(180, -260, 300)
-            cat.SetFocalPoint(0, 0, 0)
-            cat.SetColor(1.0, 1.0, 1.0)
-            cat.SetIntensity(0.45)
-            renderer.AddLight(cat)
-            viewLights.append(cat)
+            # Companion Fill/Back Light configurations matching the 'Balanced' setup
+            lightKit.SetFillLightWarmth(0.55)
+            lightKit.SetHeadLightWarmth(0.50)
+
+            # Compile and inject the light kit assembly into the active renderer viewport
+            lightKit.AddLightsToRenderer(renderer)
+
+            # Extract the newly added lights out of the renderer so your tracking infrastructure
+            # can cleanly append them to viewLights and tear them down deterministically later.
+            rendererLights = renderer.GetLights()
+            rendererLights.InitTraversal()
+            currentLight = rendererLights.GetNextItem()
+            while currentLight:
+                viewLights.append(currentLight)
+                currentLight = rendererLights.GetNextItem()
 
             # Store lights for this view so cleanup() can remove them
             self._lightsPerView[vid] = viewLights
@@ -1294,6 +1355,7 @@ class SceneManager:
           - No backup timers remain.
           - No activation/voltage scalar bar actors remain in the renderer.
           - No SceneManager-installed lights remain in any renderer.
+          - No SceneManager-generated catheter glow sheaths remain in the MRML scene.
         """
         # --------------------------------------------------------------
         # 1) Detach markups observers
@@ -1372,3 +1434,21 @@ class SceneManager:
 
         # Reset lighting flag so a new SceneManager can re-install lights
         self._lightingInstalled = False
+
+        # --------------------------------------------------------------
+        # 5) Remove SceneManager-generated catheter glow sheaths
+        #    Ensures no phantom geometry tracks persist in data reload loops.
+        # --------------------------------------------------------------
+        try:
+            # Safely fetch all model nodes currently allocated inside the active scene
+            modelNodes = slicer.util.getNodesByClass("vtkMRMLModelNode")
+            for node in modelNodes:
+                nodeName = node.GetName()
+                if nodeName and nodeName.endswith("_Glow_Rim_Sheath"):
+                    try:
+                        slicer.mrmlScene.RemoveNode(node)
+                    except Exception:
+                        pass
+        except Exception:
+            # Node teardown must never crash the main cleanup stack
+            pass
