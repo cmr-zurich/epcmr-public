@@ -23,8 +23,8 @@ class RACloneManager:
       - >=2 mapping points -> heatmap mode (handled externally)
     """
 
-    RA_COLOR = (10 / 255, 200 / 255, 205 / 255)  # cyan baseline
-    NEUTRAL_CLONE_COLOR = (0.40, 0.45, 0.55)  # CARTO-style bluish neutral
+    RA_COLOR = (102 / 255, 115 / 255, 140 / 255)  # previously cyan baseline NOTE: Changed to Gray (Carto-Style)!
+    NEUTRAL_CLONE_COLOR = (102 / 255, 115 / 255, 140 / 255)  # CARTO-style bluish neutral
     NEUTRAL_OPACITY = 0.60
 
     def __init__(self, pNode):

@@ -417,7 +417,7 @@ class SceneManager:
                 dn.SetColor(*config["color"])
                 dn.SetOpacity(0.6)
                 dn.SetAmbient(0.15)
-                dn.SetBackfaceCulling(True)
+                dn.SetBackfaceCulling(False)
                 dn.SetVisibility(True)
 
                 attr = config["attr"]
@@ -446,8 +446,10 @@ class SceneManager:
 
         dn.SetScalarVisibility(False)
 
-        # Lock front-facing triangulation only to yield the clean glass boundary profile
-        dn.SetBackfaceCulling(True)
+        # Render BOTH front-facing and back-facing polygons.
+        # This preserves the full anatomical shell and prevents holes or missing surfaces
+        # when viewing translucent geometry from oblique angles.
+        dn.SetBackfaceCulling(False)
 
         # EXACT MATERIAL TRAITS: Extracted directly from your validated layout setup
         dn.SetAmbient(0.45)  # High baseline glow color saturation
