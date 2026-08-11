@@ -120,7 +120,11 @@ class SceneManager:
         self.ANATOMY_MAP = {
             "RA": {
                 "keywords": ["rightatrium"],
-                "color": (10 / 255, 200 / 255, 205 / 255),
+                "color": (
+                    102 / 255,
+                    115 / 255,
+                    140 / 255,
+                ),  # NOTE: CARTO-style bluish neutral like 'NEUTRAL_CLONE_COLOR'/'RA_COLOR'
                 "attr": "raModel",
             },
             "RV": {
