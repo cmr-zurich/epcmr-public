@@ -24,7 +24,7 @@ class RACloneManager:
     """
 
     RA_COLOR = (102 / 255, 115 / 255, 140 / 255)  # previously cyan baseline NOTE: Changed to Gray (Carto-Style)!
-    NEUTRAL_CLONE_COLOR = (102 / 255, 115 / 255, 140 / 255)  # CARTO-style bluish neutral
+    NEUTRAL_CLONE_COLOR = (89 / 255, 102 / 255, 122 / 255)  # CARTO-style bluish neutral
     NEUTRAL_OPACITY = 0.60
 
     def __init__(self, pNode):

@@ -118,13 +118,10 @@ class SceneManager:
         # Anatomy Color Configuration
         # ---------------------------------------------------------
         self.ANATOMY_MAP = {
+            # NOTE: CARTO-style bluish neutral like 'NEUTRAL_CLONE_COLOR'/'RA_COLOR'
             "RA": {
                 "keywords": ["rightatrium"],
-                "color": (
-                    102 / 255,
-                    115 / 255,
-                    140 / 255,
-                ),  # NOTE: CARTO-style bluish neutral like 'NEUTRAL_CLONE_COLOR'/'RA_COLOR'
+                "color": (102 / 255, 115 / 255, 140 / 255),
                 "attr": "raModel",
             },
             "RV": {
