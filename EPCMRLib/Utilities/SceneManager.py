@@ -617,39 +617,100 @@ class SceneManager:
 
             viewLights = []
 
-            # Instantiate the official vtkLightKit to establish the permanent 'Balanced' profile
-            lightKit = vtk.vtkLightKit()
+            # Rim light
+            rim = vtk.vtkLight()
+            rim.SetLightTypeToSceneLight()
+            rim.SetPosition(-140, -310, 210)
+            rim.SetFocalPoint(0, 0, 0)
+            rim.SetColor(0.60, 0.70, 1.00)
+            rim.SetIntensity(0.28)
+            renderer.AddLight(rim)
+            viewLights.append(rim)
 
-            # Key Light Configurations (Extracted directly from your layout screenshot)
-            lightKit.SetKeyLightIntensity(1.50)
-            lightKit.SetKeyLightWarmth(0.60)
-            lightKit.SetKeyLightElevation(70.0)
-            lightKit.SetKeyLightAzimuth(10.0)
+            # Fill light
+            fill = vtk.vtkLight()
+            fill.SetLightTypeToSceneLight()
+            fill.SetPosition(0, 300, 120)
+            fill.SetFocalPoint(0, 0, 0)
+            fill.SetColor(1.00, 0.85, 0.70)
+            fill.SetIntensity(0.22)
+            renderer.AddLight(fill)
+            viewLights.append(fill)
 
-            # Companion Fill/Back Light configurations matching the 'Balanced' setup
-            lightKit.SetFillLightWarmth(0.55)
-            lightKit.SetHeadLightWarmth(0.50)
+            # Catheter lights
+            catFront = vtk.vtkLight()
+            catFront.SetLightTypeToSceneLight()
+            catFront.SetPosition(120, -80, 180)
+            catFront.SetFocalPoint(0, 0, 0)
+            catFront.SetColor(1.00, 1.00, 1.00)
+            catFront.SetIntensity(0.85)
+            renderer.AddLight(catFront)
+            viewLights.append(catFront)
 
-            # Compile and inject the light kit assembly into the active renderer viewport
-            lightKit.AddLightsToRenderer(renderer)
+            catRear = vtk.vtkLight()
+            catRear.SetLightTypeToSceneLight()
+            catRear.SetPosition(-120, 80, -160)
+            catRear.SetFocalPoint(0, 0, 0)
+            catRear.SetColor(1.00, 1.00, 1.00)
+            catRear.SetIntensity(0.65)
+            renderer.AddLight(catRear)
+            viewLights.append(catRear)
 
-            # Extract the newly added lights out of the renderer so your tracking infrastructure
-            # can cleanly append them to viewLights and tear them down deterministically later.
-            rendererLights = renderer.GetLights()
-            rendererLights.InitTraversal()
-            currentLight = rendererLights.GetNextItem()
-            while currentLight:
-                viewLights.append(currentLight)
-                currentLight = rendererLights.GetNextItem()
+            catTop = vtk.vtkLight()
+            catTop.SetLightTypeToSceneLight()
+            catTop.SetPosition(0, 0, 260)
+            catTop.SetFocalPoint(0, 0, 0)
+            catTop.SetColor(1.00, 1.00, 1.00)
+            catTop.SetIntensity(0.55)
+            renderer.AddLight(catTop)
+            viewLights.append(catTop)
 
-            # Store lights for this view so cleanup() can remove them
+            for catLight in (catFront, catRear, catTop):
+                catLight.SetAmbientColor(1.0, 1.0, 1.0)
+                catLight.SetDiffuseColor(1.0, 1.0, 1.0)
+                catLight.SetSpecularColor(1.0, 1.0, 1.0)
+
+            # Ambient anatomy light
+            ambient = vtk.vtkLight()
+            ambient.SetLightTypeToSceneLight()
+            ambient.SetPosition(0, 0, 0)
+            ambient.SetFocalPoint(0, 0, 0)
+            ambient.SetColor(0.95, 0.95, 1.00)
+            ambient.SetIntensity(0.75)
+            renderer.AddLight(ambient)
+            viewLights.append(ambient)
+
+            # Under-light
+            under = vtk.vtkLight()
+            under.SetLightTypeToSceneLight()
+            under.SetPosition(0, -400, -200)
+            under.SetFocalPoint(0, 0, 0)
+            under.SetColor(0.85, 0.90, 1.00)
+            under.SetIntensity(0.75)
+            renderer.AddLight(under)
+            viewLights.append(under)
+
+            # No-shadow ambient light
+            noShadow = vtk.vtkLight()
+            noShadow.SetLightTypeToSceneLight()
+            noShadow.SetPosition(0, 0, 0)
+            noShadow.SetFocalPoint(0, 0, 0)
+            noShadow.SetColor(1.0, 1.0, 1.0)
+            noShadow.SetIntensity(0.55)
+            noShadow.SetAmbientColor(1.0, 1.0, 1.0)
+            noShadow.SetDiffuseColor(0.0, 0.0, 0.0)
+            noShadow.SetSpecularColor(0.0, 0.0, 0.0)
+            renderer.AddLight(noShadow)
+            viewLights.append(noShadow)
+
             self._lightsPerView[vid] = viewLights
 
-            # Renderer quality settings (safe to reapply)
             renderer.UseFXAAOn()
             renderer.SetUseDepthPeeling(1)
             renderer.SetMaximumNumberOfPeels(50)
             renderer.SetOcclusionRatio(0.1)
+
+            view.forceRender()
 
         # Normalize anatomy appearance once lighting is in place
         for name in ["RightAtrium", "RightVentricle", "SVC", "IVC"]:
@@ -657,7 +718,81 @@ class SceneManager:
             if node:
                 self.normalizeAnatomyAppearance(node)
 
+        # Iterate dynamically through all model nodes matching the catheter naming convention
+        modelNodes = slicer.util.getNodesByClass("vtkMRMLModelNode")
+        for node in modelNodes:
+            nodeName = node.GetName()
+            if "Abl" in nodeName or "Ref" in nodeName:
+                self.normalizeCatheterAppearance(node, emissive=True)
+
         self._lightingInstalled = True
+
+    # -----------------------------------------------------------------------------
+    # Catheter appearance normalization (renderer-based mapper lookup)
+    # -----------------------------------------------------------------------------
+
+    def normalizeCatheterAppearance(self, modelNode, emissive=False):
+        if not modelNode:
+            return
+
+        modelNode.CreateDefaultDisplayNodes()
+        dn = modelNode.GetDisplayNode()
+        if not dn:
+            return
+
+        dn.SetBackfaceCulling(False)
+        dn.SetFrontfaceCulling(False)
+
+        # Plastic + glow material (HCl-style glossy cylinder)
+        dn.SetLighting(True)
+        dn.SetShading(True)
+
+        dn.SetAmbient(0.65)
+        dn.SetDiffuse(0.35)
+        dn.SetSpecular(0.45)
+
+        if emissive:
+            dn.SetAmbient(1.0)
+            dn.SetDiffuse(0.25)
+            dn.SetSpecular(0.55)
+
+        # --- Renderer-based mapper lookup ---
+        mapper = None
+        lm = slicer.app.layoutManager()
+        if lm:
+            threeDWidget = lm.threeDWidget(0)
+            if threeDWidget:
+                view = threeDWidget.threeDView()
+                if view:
+                    renderer = view.renderWindow().GetRenderers().GetFirstRenderer()
+                    if renderer:
+                        props = renderer.GetViewProps()
+                        props.InitTraversal()
+                        p = props.GetNextProp()
+                        while p:
+                            if hasattr(p, "GetMapper"):
+                                m = p.GetMapper()
+                                if m and m.GetInput() == modelNode.GetPolyData():
+                                    mapper = m
+                                    break
+                            p = props.GetNextProp()
+
+        if mapper:
+            mapper.SetLighting(False)
+            mapper.SetColorModeToDirectScalars()
+            mapper.ScalarVisibilityOff()
+
+        polyData = modelNode.GetPolyData()
+        if polyData:
+            normals = vtk.vtkPolyDataNormals()
+            normals.SetInputData(polyData)
+            normals.SplittingOff()
+            normals.ConsistencyOn()
+            normals.AutoOrientNormalsOn()
+            normals.Update()
+            polyData.DeepCopy(normals.GetOutput())
+            polyData.Modified()
+            modelNode.Modified()
 
     # ------------------------------------------------------------------
     # Scalar bar helpers (dual legends)
