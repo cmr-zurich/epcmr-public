@@ -732,7 +732,7 @@ class SceneManager:
     # -----------------------------------------------------------------------------
     # BEFORE: Catheter appearance normalization (renderer-based mapper lookup)
 
-    def normalizeCatheterAppearance(self, modelNode, emissive=True):
+    def normalizeCatheterAppearance(self, modelNode, emissive=False):
         if not modelNode:
             return
 

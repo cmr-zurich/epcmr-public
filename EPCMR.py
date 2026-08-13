@@ -13,7 +13,6 @@ import ctk
 import slicer
 from slicer.ScriptedLoadableModule import *
 
-
 # ---- 2. Path Injection (MUST BE FIRST) ----
 # Excellent path injection code: This script automatically handles its own
 # subfolder structure by dynamically locating the current directory. It appends
@@ -1652,7 +1651,9 @@ class EPCMRWidget(ScriptedLoadableModuleWidget):
 
         # Free Angulator launcher button
         self.freeAngulatorButton = qt.QPushButton("Open Free Angulator")
-        self.freeAngulatorButton.toolTip = "Open the Free Angulator floating panel for slice angulation and geometry storage."
+        self.freeAngulatorButton.toolTip = (
+            "Open the Free Angulator floating panel for slice angulation and geometry storage."
+        )
         selectionLayout.addRow("Free Angulation:", self.freeAngulatorButton)
         self.freeAngulatorButton.clicked.connect(self.onOpenFreeAngulator)
 
@@ -1852,6 +1853,19 @@ class EPCMRWidget(ScriptedLoadableModuleWidget):
     # Reload
     # ----------------------------------------------------------------------
     def onReload(self):
+        # --- Pre-reload SceneManager tracking flag and pipeline reset ---
+        try:
+            oldLogic = slicer.util.getModuleLogic("EPCMR")
+            if oldLogic and hasattr(oldLogic, "sceneManager") and oldLogic.sceneManager:
+                sm = oldLogic.sceneManager
+                # Force-disable the guard flag so setupLighting can process fresh code edits on reload
+                sm._lightingInstalled = False
+                # Revert catheter material pipelines and clear tracked lights cleanly
+                sm.cleanup()
+                logging.info("EPCMR: Pre-reload SceneManager lighting flags cleared successfully.")
+        except Exception as e:
+            logging.warning(f"EPCMR: Pre-reload lighting flush skipped or failed: {e}")
+
         try:
             self.cleanup()
         except Exception as e:
