@@ -717,8 +717,6 @@ class SceneManager:
             renderer.SetMaximumNumberOfPeels(50)
             renderer.SetOcclusionRatio(0.1)
 
-            view.forceRender()
-
         # Normalize anatomy appearance once lighting is in place
         for name in ["RightAtrium", "RightVentricle", "SVC", "IVC"]:
             node = slicer.util.getFirstNodeByName(name)
@@ -732,7 +730,57 @@ class SceneManager:
             if "Abl" in nodeName or "Ref" in nodeName:
                 self.normalizeCatheterAppearance(node, emissive=True)
 
+        # Unified viewport synchronization pass to avoid mid-loop pipeline stalls
+        for i in range(lm.threeDViewCount):
+            threeDWidget = lm.threeDWidget(i)
+            if threeDWidget:
+                view = threeDWidget.threeDView()
+                if view:
+                    view.forceRender()
+
         self._lightingInstalled = True
+
+    def resetLighting(self):
+        """Tears down tracked EPCMR lights and forces setupLighting to run cleanly again."""
+        # Flip the safety guard flag to bypass the early-return block
+        self._lightingInstalled = False
+
+        lm = slicer.app.layoutManager()
+        if not lm or not hasattr(self, "_lightsPerView"):
+            # If no lights are tracked yet, just run standard setup safely
+            self.setupLighting()
+            return
+
+        # Explicitly sweep away tracked lights from active view render pipelines
+        for i in range(lm.threeDViewCount):
+            threeDWidget = lm.threeDWidget(i)
+            if not threeDWidget:
+                continue
+            view = threeDWidget.threeDView()
+            if not view:
+                continue
+            viewNode = view.mrmlViewNode()
+            if not viewNode:
+                continue
+            vid = viewNode.GetID()
+
+            renderer = view.renderWindow().GetRenderers().GetFirstRenderer()
+            if not renderer:
+                continue
+
+            # Remove only the custom lights we registered for this view ID
+            trackedLights = self._lightsPerView.get(vid, [])
+            for light in trackedLights:
+                try:
+                    renderer.RemoveLight(light)
+                except Exception:
+                    pass
+
+            # Clear the tracking list for this viewport
+            self._lightsPerView[vid] = []
+
+        # Re-execute the complete setup pass clean
+        self.setupLighting()
 
     # -----------------------------------------------------------------------------
     # Catheter appearance normalization (Safe MRML display setup)
