@@ -142,7 +142,9 @@ class CatheterReplayerUI(qt.QWidget):
 
         # Connections
         self.btn_first.clicked.connect(lambda: self.replayer.jump_to_frame(0))
-        self.btn_last.clicked.connect(lambda: self.replayer.jump_to_frame(max(0, len(self.replayer.matrix_history) - 1)))
+        self.btn_last.clicked.connect(
+            lambda: self.replayer.jump_to_frame(max(0, len(self.replayer.matrix_history) - 1))
+        )
         self.btn_prev.clicked.connect(lambda: self.replayer.jump_to_frame(self.replayer.current_idx - 1))
         self.btn_next.clicked.connect(lambda: self.replayer.jump_to_frame(self.replayer.current_idx + 1))
 
@@ -676,13 +678,15 @@ class CatheterReplayer:
                             "json_index": abl_idx,
                             "valid": abl_valid,
                         },
-                        "Ref_01": {
-                            "data": ref_entry["data"],
-                            "json_index": ref_entry["json_index"],
-                            "valid": ref_valid,
-                        }
-                        if ref_entry
-                        else None,
+                        "Ref_01": (
+                            {
+                                "data": ref_entry["data"],
+                                "json_index": ref_entry["json_index"],
+                                "valid": ref_valid,
+                            }
+                            if ref_entry
+                            else None
+                        ),
                         "timestamp": abl["timestamp"],
                     }
                 )
@@ -698,12 +702,23 @@ class CatheterReplayer:
                 }
             self.pNode.validityTable = vt
 
+            # --------------------------------------------------------------
+            # FIX: convert [sec, nsec] → float seconds before subtracting
+            # --------------------------------------------------------------
+            def ts_to_float(ts):
+                if isinstance(ts, list) and len(ts) == 2:
+                    return ts[0] + ts[1] * 1e-9
+                return float(ts)
+
             deltas: List[float] = []
             for k in range(1, min(len(self.matrix_history), 500)):
                 t1 = self.matrix_history[k - 1]["timestamp"]
                 t2 = self.matrix_history[k]["timestamp"]
-                if t1 is not None and t2 is not None and t2 > t1:
-                    deltas.append(t2 - t1)
+                if t1 is not None and t2 is not None:
+                    f1 = ts_to_float(t1)
+                    f2 = ts_to_float(t2)
+                    if f2 > f1:
+                        deltas.append(f2 - f1)
 
             if deltas:
                 median_delta = np.median(deltas)
@@ -730,7 +745,9 @@ class CatheterReplayer:
             self.jump_to_frame(0)
             self.update_timer_speed()
 
-            logging.info(f"CatheterReplayer: Loaded {total_frames} bundles, native interval ≈ {self.native_interval_ms} ms")
+            logging.info(
+                f"CatheterReplayer: Loaded {total_frames} bundles, native interval ≈ {self.native_interval_ms} ms"
+            )
 
         except Exception as e:
             logging.error(f"CatheterReplayer: Failed to load file: {e}")
@@ -773,7 +790,14 @@ class CatheterReplayer:
             self.last_line_ref = ref_entry["json_index"]
 
         ts = bundle.get("timestamp", 0.0)
-        elapsed = ts - self.start_timestamp if self.start_timestamp else 0.0
+
+        def ts_to_float(ts):
+            if isinstance(ts, list) and len(ts) == 2:
+                return ts[0] + ts[1] * 1e-9
+            return float(ts)
+
+        elapsed = ts_to_float(ts) - ts_to_float(self.start_timestamp) if self.start_timestamp else 0.0
+
         minutes = int(elapsed // 60)
         seconds = int(elapsed % 60)
         millis = int((elapsed - int(elapsed)) * 1000)
