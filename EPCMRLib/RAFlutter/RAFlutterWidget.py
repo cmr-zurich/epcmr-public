@@ -220,6 +220,7 @@ class RAFlutterWidget(qt.QWidget):
         # ============================================================
         self.replayerCollapsibleButton = ctk.ctkCollapsibleButton()
         self.replayerCollapsibleButton.text = "Catheter Replay"
+        self.replayerCollapsibleButton.collapsed = True  # collapse on startup
         layout.addWidget(self.replayerCollapsibleButton)
 
         replayerContainer = qt.QWidget()

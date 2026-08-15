@@ -1714,6 +1714,7 @@ class EPCMRWidget(ScriptedLoadableModuleWidget):
         # ------------------------------------------------------------------
         lightingCollapsibleButton = ctk.ctkCollapsibleButton()
         lightingCollapsibleButton.text = "EPCMR View & Lighting Controls"
+        lightingCollapsibleButton.collapsed = True  # <-- collapse on startup
         self.layout.addWidget(lightingCollapsibleButton)
 
         lightingLayout = qt.QFormLayout(lightingCollapsibleButton)
