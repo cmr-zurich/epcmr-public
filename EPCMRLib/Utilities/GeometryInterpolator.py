@@ -203,7 +203,7 @@ class GeometryInterpolator:
         if dn:
             dn.SetActiveScalarName("Voltage")
             dn.SetScalarVisibility(True)
-            dn.SetOpacity(0.40)
+            dn.SetOpacity(0.56)
 
             # Apply CARTO-style voltage colormap (normalized to [low, high])
             self.colorMapper.apply_voltage_colormap(self.clonedRA, low, high)
