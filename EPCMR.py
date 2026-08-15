@@ -1713,7 +1713,7 @@ class EPCMRWidget(ScriptedLoadableModuleWidget):
         # EPCMR View & Lighting Controls
         # ------------------------------------------------------------------
         lightingCollapsibleButton = ctk.ctkCollapsibleButton()
-        lightingCollapsibleButton.text = "EPCMR View & Lighting Controls"
+        lightingCollapsibleButton.text = "EPCMR Lighting Controls"
         lightingCollapsibleButton.collapsed = True  # <-- collapse on startup
         self.layout.addWidget(lightingCollapsibleButton)
 
