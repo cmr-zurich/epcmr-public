@@ -207,6 +207,10 @@ class EPCMRLogic(ScriptedLoadableModuleLogic):
             self._replayerInstance = None
             return None
 
+    def restoreDefaultLighting(self):
+        if hasattr(self, "sceneManager") and self.sceneManager:
+            self.sceneManager.lightsManager.resetLighting()
+
     # ------------------------------------------------------------------
     # 1. Raw MRML node creation (Slicer API)
     # ------------------------------------------------------------------
@@ -463,13 +467,18 @@ class EPCMRLogic(ScriptedLoadableModuleLogic):
                 self.sceneManager.setupCustomOrientationMarker()
             if hasattr(self.sceneManager, "changeViewAxisLabels"):
                 self.sceneManager.changeViewAxisLabels()
+
             # Lighting must run AFTER models + display nodes exist
             # QTimer ensures lighting runs after the renderer has geometry
-            if hasattr(self.sceneManager, "setupLighting"):
-                qt.QTimer.singleShot(0, self.sceneManager.setupLighting)
+            if hasattr(self.sceneManager, "lightsManager"):
+                qt.QTimer.singleShot(0, self.sceneManager.lightsManager.setupLighting)
 
             # Enforce black background in all 3D views
             qt.QTimer.singleShot(0, self.setThreeDViewBackgroundToBlack)
+
+            # Emissive catheter normalization (must run after lighting + models)
+            if hasattr(self.sceneManager, "normalizeAllCathetersEmissive"):
+                qt.QTimer.singleShot(50, self.sceneManager.normalizeAllCathetersEmissive)
 
         # ------------------------------------------------------------------
         # OpenIGTLink connection (Slicer 5.7+ timing-safe)
@@ -1623,12 +1632,8 @@ class EPCMRWidget(ScriptedLoadableModuleWidget):
             activeLogic.restoreDefaultLighting()
             print("EPCMR Lighting: Restored via Logic interface bridge.")
 
-        elif activeLogic and hasattr(activeLogic, "sceneManager") and activeLogic.sceneManager is not None:
-            # Emergency direct bypass: Trigger the SceneManager workflow directly
-            # if the logic bridge method is stripped or cached out of memory.
-            activeLogic.sceneManager._lightingInstalled = False
-            activeLogic.sceneManager.setupLighting()
-            print("EPCMR Lighting: Restored directly via SceneManager fallback bypass.")
+        elif activeLogic and hasattr(activeLogic, "restoreDefaultLighting"):
+            activeLogic.restoreDefaultLighting()
 
         else:
             # Absolute last resort: Scrape all initialized model nodes to find a live reference

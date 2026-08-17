@@ -8,6 +8,7 @@ import slicer
 import vtk
 
 from EPCMRLib.EPCMRParameterNode import EPCMRParameterNode
+from EPCMRLib.Utilities.LightsManager import LightsManager
 
 VTK_VERSION = (vtk.vtkVersion.GetVTKMajorVersion(), vtk.vtkVersion.GetVTKMinorVersion())
 
@@ -53,6 +54,11 @@ class SceneManager:
             raise TypeError(f"SceneManager expected EPCMRParameterNode wrapper, got {type(wrappedParameterNode)}")
 
         self.pNode: EPCMRParameterNode = wrappedParameterNode
+
+        # ---------------------------------------------------------
+        # Manage Lights
+        # ---------------------------------------------------------
+        self.lightsManager = LightsManager()
 
         # ---------------------------------------------------------
         # Sascha's Rainbow procedural color node (singleton)
@@ -564,231 +570,8 @@ class SceneManager:
         except Exception:
             return None
 
-    def setupLighting(self):
-        """
-        Balanced CARTO-style lighting with catheter safety.
-
-        Idempotent across resets:
-          - Lights are installed only once per SceneManager lifetime.
-          - Lights are tracked per view and removed in cleanup().
-        """
-        if getattr(self, "_lightingInstalled", False):
-            return
-
-        lm = slicer.app.layoutManager()
-        if not lm:
-            return
-
-        # Track lights per view so we can remove them deterministically in cleanup()
-        if not hasattr(self, "_lightsPerView"):
-            self._lightsPerView = {}
-
-        for i in range(lm.threeDViewCount):
-            threeDWidget = lm.threeDWidget(i)
-            if not threeDWidget:
-                continue
-            view = threeDWidget.threeDView()
-            if not view:
-                continue
-            viewNode = view.mrmlViewNode()
-            if not viewNode:
-                continue
-            vid = viewNode.GetID()
-            renderer = view.renderWindow().GetRenderers().GetFirstRenderer()
-            if not renderer:
-                continue
-
-            # Remove all existing lights to prevent double-stacking on cold startup
-            lights = renderer.GetLights()
-            lights.InitTraversal()
-            existingLights = []
-            l = lights.GetNextItem()
-            while l:
-                existingLights.append(l)
-                l = lights.GetNextItem()
-            for l in existingLights:
-                try:
-                    renderer.RemoveLight(l)
-                except:
-                    pass
-
-            # Remove default headlight
-            lights = renderer.GetLights()
-            lights.InitTraversal()
-            head = lights.GetNextItem()
-            if head:
-                try:
-                    renderer.RemoveLight(head)
-                except:
-                    pass
-
-            viewLights = []
-
-            # Rim light
-            rim = vtk.vtkLight()
-            rim.SetLightTypeToSceneLight()
-            rim.SetPosition(-140, -310, 210)
-            rim.SetFocalPoint(0, 0, 0)
-            rim.SetColor(0.60, 0.70, 1.00)
-            rim.SetIntensity(0.28)
-            renderer.AddLight(rim)
-            viewLights.append(rim)
-
-            # Fill light
-            fill = vtk.vtkLight()
-            fill.SetLightTypeToSceneLight()
-            fill.SetPosition(0, 300, 120)
-            fill.SetFocalPoint(0, 0, 0)
-            fill.SetColor(1.00, 0.85, 0.70)
-            fill.SetIntensity(0.22)
-            renderer.AddLight(fill)
-            viewLights.append(fill)
-
-            # Catheter lights
-            catFront = vtk.vtkLight()
-            catFront.SetLightTypeToSceneLight()
-            catFront.SetPosition(120, -80, 180)
-            catFront.SetFocalPoint(0, 0, 0)
-            catFront.SetColor(1.00, 1.00, 1.00)
-            catFront.SetIntensity(0.85)
-            renderer.AddLight(catFront)
-            viewLights.append(catFront)
-
-            catRear = vtk.vtkLight()
-            catRear.SetLightTypeToSceneLight()
-            catRear.SetPosition(-120, 80, -160)
-            catRear.SetFocalPoint(0, 0, 0)
-            catRear.SetColor(1.00, 1.00, 1.00)
-            catRear.SetIntensity(0.65)
-            renderer.AddLight(catRear)
-            viewLights.append(catRear)
-
-            catTop = vtk.vtkLight()
-            catTop.SetLightTypeToSceneLight()
-            catTop.SetPosition(0, 0, 260)
-            catTop.SetFocalPoint(0, 0, 0)
-            catTop.SetColor(1.00, 1.00, 1.00)
-            catTop.SetIntensity(0.55)
-            renderer.AddLight(catTop)
-            viewLights.append(catTop)
-
-            for catLight in (catFront, catRear, catTop):
-                catLight.SetAmbientColor(1.0, 1.0, 1.0)
-                catLight.SetDiffuseColor(1.0, 1.0, 1.0)
-                catLight.SetSpecularColor(1.0, 1.0, 1.0)
-
-            # Ambient anatomy light
-            ambient = vtk.vtkLight()
-            ambient.SetLightTypeToSceneLight()
-            ambient.SetPosition(0, 0, 0)
-            ambient.SetFocalPoint(0, 0, 0)
-            ambient.SetColor(0.95, 0.95, 1.00)
-            ambient.SetIntensity(0.75)
-            renderer.AddLight(ambient)
-            viewLights.append(ambient)
-
-            # Under-light
-            under = vtk.vtkLight()
-            under.SetLightTypeToSceneLight()
-            under.SetPosition(0, -400, -200)
-            under.SetFocalPoint(0, 0, 0)
-            under.SetColor(0.85, 0.90, 1.00)
-            under.SetIntensity(0.75)
-            renderer.AddLight(under)
-            viewLights.append(under)
-
-            # No-shadow ambient light
-            noShadow = vtk.vtkLight()
-            noShadow.SetLightTypeToSceneLight()
-            noShadow.SetPosition(0, 0, 0)
-            noShadow.SetFocalPoint(0, 0, 0)
-            noShadow.SetColor(1.0, 1.0, 1.0)
-            noShadow.SetIntensity(0.55)
-            noShadow.SetAmbientColor(1.0, 1.0, 1.0)
-            noShadow.SetDiffuseColor(0.0, 0.0, 0.0)
-            noShadow.SetSpecularColor(0.0, 0.0, 0.0)
-            renderer.AddLight(noShadow)
-            viewLights.append(noShadow)
-
-            self._lightsPerView[vid] = viewLights
-
-            renderer.UseFXAAOn()
-            renderer.SetUseDepthPeeling(1)
-            renderer.SetMaximumNumberOfPeels(50)
-            renderer.SetOcclusionRatio(0.1)
-
-        # Normalize anatomy appearance once lighting is in place
-        for name in ["RightAtrium", "RightVentricle", "SVC", "IVC"]:
-            node = slicer.util.getFirstNodeByName(name)
-            if node:
-                self.normalizeAnatomyAppearance(node)
-
-        # Iterate dynamically through all model nodes matching the catheter naming convention
-        modelNodes = slicer.util.getNodesByClass("vtkMRMLModelNode")
-        for node in modelNodes:
-            nodeName = node.GetName()
-            if "Abl" in nodeName or "Ref" in nodeName:
-                self.normalizeCatheterAppearance(node, emissive=True)
-
-        # Unified viewport synchronization pass to avoid mid-loop pipeline stalls
-        for i in range(lm.threeDViewCount):
-            threeDWidget = lm.threeDWidget(i)
-            if threeDWidget:
-                view = threeDWidget.threeDView()
-                if view:
-                    view.forceRender()
-
-        self._lightingInstalled = True
-
-    def resetLighting(self):
-        """Tears down tracked EPCMR lights and forces setupLighting to run cleanly again."""
-        # Flip the safety guard flag to bypass the early-return block
-        self._lightingInstalled = False
-
-        lm = slicer.app.layoutManager()
-        if not lm or not hasattr(self, "_lightsPerView"):
-            # If no lights are tracked yet, just run standard setup safely
-            self.setupLighting()
-            return
-
-        # Explicitly sweep away tracked lights from active view render pipelines
-        for i in range(lm.threeDViewCount):
-            threeDWidget = lm.threeDWidget(i)
-            if not threeDWidget:
-                continue
-            view = threeDWidget.threeDView()
-            if not view:
-                continue
-            viewNode = view.mrmlViewNode()
-            if not viewNode:
-                continue
-            vid = viewNode.GetID()
-
-            renderer = view.renderWindow().GetRenderers().GetFirstRenderer()
-            if not renderer:
-                continue
-
-            # Remove only the custom lights we registered for this view ID
-            trackedLights = self._lightsPerView.get(vid, [])
-            for light in trackedLights:
-                try:
-                    renderer.RemoveLight(light)
-                except Exception:
-                    pass
-
-            # Clear the tracking list for this viewport
-            self._lightsPerView[vid] = []
-
-        # Re-execute the complete setup pass clean
-        self.setupLighting()
-
     # -----------------------------------------------------------------------------
-    # Catheter appearance normalization (Safe MRML display setup)
-    # -----------------------------------------------------------------------------
-    # BEFORE: Catheter appearance normalization (renderer-based mapper lookup)
-
-    # -----------------------------------------------------------------------------
-    # Catheter appearance normalization (Safe MRML display setup)
+    # Catheter appearance normalization (Safe MRML-based display setup)
     # -----------------------------------------------------------------------------
 
     def normalizeCatheterAppearance(self, modelNode, emissive=False):
@@ -832,6 +615,13 @@ class SceneManager:
             polyData.DeepCopy(normals.GetOutput())
             polyData.Modified()
             modelNode.Modified()
+
+    def normalizeAllCathetersEmissive(self):
+        modelNodes = slicer.util.getNodesByClass("vtkMRMLModelNode")
+        for node in modelNodes:
+            name = node.GetName() or ""
+            if "Abl" in name or "Ref" in name:
+                self.normalizeCatheterAppearance(node, emissive=True)
 
     # ------------------------------------------------------------------
     # Scalar bar helpers (dual legends)
@@ -1089,7 +879,7 @@ class SceneManager:
             return
 
         if hasattr(self, "setupLighting"):
-            self.setupLighting()
+            self.lightsManager.setupLighting()
 
         clone = getattr(self.pNode, "raClonedModel", None)
         if not clone:
@@ -1580,13 +1370,15 @@ class SceneManager:
         # 1) Detach markups observers
         # --------------------------------------------------------------
         for key, tags in getattr(self, "_markupObserverTags", {}).items():
-            node = getattr(self.pNode, key, None)
+            node = getattr(self, "pNode", None)
             if node:
-                for tag in tags:
-                    try:
-                        node.RemoveObserver(tag)
-                    except Exception:
-                        pass
+                targetNode = getattr(node, key, None)
+                if targetNode:
+                    for tag in tags:
+                        try:
+                            targetNode.RemoveObserver(tag)
+                        except Exception:
+                            pass
         self._markupObserverTags = {}
 
         # --------------------------------------------------------------
@@ -1625,34 +1417,12 @@ class SceneManager:
         # 4) Remove SceneManager-installed lights (no accumulation)
         # --------------------------------------------------------------
         try:
-            lm = slicer.app.layoutManager()
-            if lm and hasattr(self, "_lightsPerView"):
-                for i in range(lm.threeDViewCount):
-                    threeDWidget = lm.threeDWidget(i)
-                    if not threeDWidget:
-                        continue
-                    view = threeDWidget.threeDView()
-                    if not view:
-                        continue
-                    viewNode = view.mrmlViewNode()
-                    if not viewNode:
-                        continue
-                    vid = viewNode.GetID()
-                    renderer = view.renderWindow().GetRenderers().GetFirstRenderer()
-                    if not renderer:
-                        continue
-                    for light in self._lightsPerView.get(vid, []):
-                        try:
-                            renderer.RemoveLight(light)
-                        except Exception:
-                            pass
-            self._lightsPerView = {}
+            # Delegate to LightsManager if available; ensures deterministic teardown
+            if hasattr(self, "lightsManager") and self.lightsManager:
+                self.lightsManager.cleanup()
         except Exception:
             # Lighting cleanup must never break teardown
             pass
-
-        # Reset lighting flag so a new SceneManager can re-install lights
-        self._lightingInstalled = False
 
         # --------------------------------------------------------------
         # 5) Remove SceneManager-generated catheter glow sheaths
