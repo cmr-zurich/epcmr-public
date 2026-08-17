@@ -169,7 +169,7 @@ class CatheterReplayerUI(qt.QWidget):
         layout.addLayout(btn_layout)
 
     def closeEvent(self, event: qt.QCloseEvent) -> None:
-        # Prevent destruction — only hide the window
+        # Prevent destruction - only hide the window
         event.ignore()
         self.hide()
 
@@ -709,7 +709,7 @@ class CatheterReplayer:
             self.pNode.validityTable = vt
 
             # --------------------------------------------------------------
-            # FIX: convert [sec, nsec] → float seconds before subtracting
+            # FIX: convert [sec, nsec] -> float seconds before subtracting
             # --------------------------------------------------------------
             def ts_to_float(ts):
                 if isinstance(ts, list) and len(ts) == 2:
@@ -761,7 +761,7 @@ class CatheterReplayer:
             self.play_direction = 1
 
             logging.info(
-                f"CatheterReplayer: Loaded {total_frames} bundles, native interval ≈ {self.native_interval_ms} ms"
+                f"CatheterReplayer: Loaded {total_frames} bundles, native interval ~= {self.native_interval_ms} ms"
             )
 
         except Exception as e:
@@ -998,7 +998,7 @@ class CatheterReplayer:
         # Effective interval
         interval_ms = int(base_ms / self._speed_factor)
 
-        # Hard cap: 12 FPS → 83 ms
+        # Hard cap: 12 FPS -> 83 ms
         interval_ms = max(interval_ms, 83)
 
         # Configure timer

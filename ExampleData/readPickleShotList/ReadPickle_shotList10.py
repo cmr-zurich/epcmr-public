@@ -1,34 +1,35 @@
-from time import time, sleep
-import numpy as np
 import pickle
-
-# ===============================================================================
-# This is for creating, converting  and searching mutable, nested dictionaries
-# ===============================================================================
-from collections import defaultdict
-from typing import Any
-
-# ====================================================================
-# This is for transformation matrices and communication with Slicer
-# ====================================================================
-import pyigtl
 
 # ====================================================================
 # This is for communication with HoloLens
 # =====================================================================
 import socket
 
+# ===============================================================================
+# This is for creating, converting  and searching mutable, nested dictionaries
+# ===============================================================================
+from collections import defaultdict
+from time import sleep, time
+from typing import Any
+
+import numpy as np
+
+# ====================================================================
+# This is for transformation matrices and communication with Slicer
+# ====================================================================
+import pyigtl
+
 # ========================================================================================================================================
 # These lists map the channel numbers onto (human-readable) identifiers. Also assign signal colors to the channels (for plotting)
 # In my notes of 2020, the channel numbers on the interface box
 # are these:
 #
-# Anschluss der Katheterleitungen an die Interface-Box: die Eingänge sind von links nach rechts nummeriert. Dabei kommt an
+# Anschluss der Katheterleitungen an die Interface-Box: die Eingaenge sind von links nach rechts nummeriert. Dabei kommt an
 #
-# 1 – Abl distal
-# 2 – Abl proximal
-# 3 – Diag distal
-# 4 – Diag proximal
+# 1 - Abl distal
+# 2 - Abl proximal
+# 3 - Diag distal
+# 4 - Diag proximal
 # ========================================================================================================================================
 chMap = (
     ("abl", "dist"),  # ch0
@@ -86,7 +87,9 @@ distanceBetweenCoils = 9  # distance between coil elements in mm (was 7.77)
 distanceBetweenTipAndNearestCoil = 8.1  # distance between the distal coil and the catheter tip
 margin = 4.0  # allowed tolerance of distance between coils (was 2.0)
 maxExtent = 2.0  # Maximum width of a peak (sensitivity profile of microcoil)
-maxRelPeakDiff = 20  # Maximum relative difference between peaks to accept them as a peak pair left and right of the actual coil
+maxRelPeakDiff = (
+    20  # Maximum relative difference between peaks to accept them as a peak pair left and right of the actual coil
+)
 maxAveragingDistance = 30  # If the catheter is moved very quickly, averaging may result in the catheter apparantly taking an "illegal shortcut" (direct path between positions). Turn averaging off in those cases.
 
 
@@ -222,7 +225,9 @@ def smart_averaging(cath, shot, shotList, numAverages, maxAveragingDistance):
         # to prevent pulling in stale historical data vectors across the blackout gap
         smart_averaging.consecutive_errors = 0
 
-        avgCenterPos = (np.array(shot[cath]["dist"]["coilPositionXYZ"]) + np.array(shot[cath]["prox"]["coilPositionXYZ"])) / 2.0
+        avgCenterPos = (
+            np.array(shot[cath]["dist"]["coilPositionXYZ"]) + np.array(shot[cath]["prox"]["coilPositionXYZ"])
+        ) / 2.0
         avgDirVector = np.array(shot[cath]["dist"]["coilPositionXYZ"]) - np.array(shot[cath]["prox"]["coilPositionXYZ"])
 
         coilDistance = np.linalg.norm(avgDirVector)
@@ -358,7 +363,9 @@ def smart_averaging_weighted_mean(cath, shot, shotList, numAverages, maxAveragin
         # to prevent pulling in stale historical data vectors across the blackout gap
         smart_averaging_weighted_mean.consecutive_errors = 0
 
-        avgCenterPos = (np.array(shot[cath]["dist"]["coilPositionXYZ"]) + np.array(shot[cath]["prox"]["coilPositionXYZ"])) / 2.0
+        avgCenterPos = (
+            np.array(shot[cath]["dist"]["coilPositionXYZ"]) + np.array(shot[cath]["prox"]["coilPositionXYZ"])
+        ) / 2.0
         avgDirVector = np.array(shot[cath]["dist"]["coilPositionXYZ"]) - np.array(shot[cath]["prox"]["coilPositionXYZ"])
 
         coilDistance = np.linalg.norm(avgDirVector)
@@ -669,7 +676,9 @@ def smart_averaging_velocity_adaptive_ema(cath, shot, shotList, numAverages, max
 # Calculates true frame-by-frame exponential smoothing where past positions decay exponentially by age.
 # Dynamically adjusts filtering weight based on hand speed, while imposing a strict 500 ms history lookback limit.
 # NOTE: DOES guarantee that up to 5 valid positions will be collected if available. Instead of checking a fixed window of time (numAverages), it actively searches backward until (numAverages) valid points are found, unless it hits the hard 500 ms temporal wall.
-def smart_averaging_velocity_adaptive_ema_with_temporal_horizon_cap(cath, shot, shotList, numAverages, maxAveragingDistance):
+def smart_averaging_velocity_adaptive_ema_with_temporal_horizon_cap(
+    cath, shot, shotList, numAverages, maxAveragingDistance
+):
     avgCenterPos = {}
     avgDirVector = {}
 
@@ -757,7 +766,7 @@ def pos_to_matrix(centerPos, dirVector):
     # ===========================================================================================================================================
     # References (rotation matrix)
     # https://math.stackexchange.com/questions/1956699/getting-a-transformation-matrix-from-a-normal-vector
-    # Leonhard Euler, "Problema algebraicum ob affectiones prorsus singulares memorabile", Commentatio 407 Indicis Enestoemiani, Novi Comm. Acad. Sci. Petropolitanae 15 (1770), 75–106
+    # Leonhard Euler, "Problema algebraicum ob affectiones prorsus singulares memorabile", Commentatio 407 Indicis Enestoemiani, Novi Comm. Acad. Sci. Petropolitanae 15 (1770), 75-106
     # ===========================================================================================================================================
 
     matrix = np.eye(4)
@@ -861,7 +870,9 @@ if replayPickleFile:
                     maxAveragingDistance,
                 )
 
-                avgTipPos = avgCenterPos + (0.5 * distanceBetweenCoils + distanceBetweenTipAndNearestCoil) * avgDirVector
+                avgTipPos = (
+                    avgCenterPos + (0.5 * distanceBetweenCoils + distanceBetweenTipAndNearestCoil) * avgDirVector
+                )
 
                 lastGoodAvgTipPos[cath] = avgTipPos
                 lastGoodAvgDirVector[cath] = avgDirVector
