@@ -1,9 +1,10 @@
 import qt
 import slicer
 from slicer.ScriptedLoadableModule import ScriptedLoadableModuleWidget
-from .FreeAngulatorLogic import FreeAngulatorLogic
+
 from EPCMRLib.EPCMRParameterNode import EPCMRParameterNode
 
+from .FreeAngulatorLogic import FreeAngulatorLogic
 
 # ----------------------------------------------------------------------
 # GEOMETRY HELPERS (robust across PythonQt variants)
@@ -80,7 +81,9 @@ class FreeAngulatorWidget(qt.QWidget):
 
         self.setWindowTitle("Free Angulator")
         # Disable maximize button (keep close + optional minimize)
-        self.setWindowFlags(qt.Qt.Window | qt.Qt.WindowStaysOnTopHint | qt.Qt.CustomizeWindowHint | qt.Qt.WindowCloseButtonHint)
+        self.setWindowFlags(
+            qt.Qt.Window | qt.Qt.WindowStaysOnTopHint | qt.Qt.CustomizeWindowHint | qt.Qt.WindowCloseButtonHint
+        )
 
         self.setMinimumWidth(420)
 
@@ -114,7 +117,7 @@ class FreeAngulatorWidget(qt.QWidget):
         elif isinstance(pos, (list, tuple)) and len(pos) == 2:
             self.move(int(pos[0]), int(pos[1]))
         else:
-            # FIRST TIME EVER → place at 40 px left
+            # FIRST TIME EVER -> place at 40 px left
             self._applyLeftSidePlacement()
 
     # ------------------------------------------------------------------

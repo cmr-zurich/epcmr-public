@@ -78,9 +78,11 @@ class CatheterReplayerUI(qt.QWidget):
         self.speed_combo = qt.QComboBox()
         self.speed_combo.setObjectName("speed_combo")
         self.speed_combo.currentIndexChanged.connect(lambda _: self.replayer.update_timer_speed())
-        self.speed_combo.addItems(["0.5x", "1.0x", "2.0x", "5.0x"])
-        self.speed_combo.setCurrentIndex(1)
 
+        # Updated speed options (truthful, consistent with actual replay capabilities)
+        self.speed_combo.addItems(["0.5x", "1.0x", "1.5x"])
+
+        self.speed_combo.setCurrentIndex(1)
         speed_mode_layout.addWidget(qt.QLabel("Speed:"))
         speed_mode_layout.addWidget(self.speed_combo)
 
@@ -142,7 +144,9 @@ class CatheterReplayerUI(qt.QWidget):
 
         # Connections
         self.btn_first.clicked.connect(lambda: self.replayer.jump_to_frame(0))
-        self.btn_last.clicked.connect(lambda: self.replayer.jump_to_frame(max(0, len(self.replayer.matrix_history) - 1)))
+        self.btn_last.clicked.connect(
+            lambda: self.replayer.jump_to_frame(max(0, len(self.replayer.matrix_history) - 1))
+        )
         self.btn_prev.clicked.connect(lambda: self.replayer.jump_to_frame(self.replayer.current_idx - 1))
         self.btn_next.clicked.connect(lambda: self.replayer.jump_to_frame(self.replayer.current_idx + 1))
 
@@ -165,7 +169,7 @@ class CatheterReplayerUI(qt.QWidget):
         layout.addLayout(btn_layout)
 
     def closeEvent(self, event: qt.QCloseEvent) -> None:
-        # Prevent destruction — only hide the window
+        # Prevent destruction - only hide the window
         event.ignore()
         self.hide()
 
@@ -220,6 +224,10 @@ class CatheterReplayer:
         self._fpsFrameCount: int = 0
         self._fpsLastUpdateMs: Optional[int] = None
         self._currentFPS: float = 0.0
+
+        # --- NEW: separate timestamps for frame pacing and FPS window ---
+        self._fpsWindowStartMs: Optional[int] = None
+        self._fpsLastFrameMs: Optional[int] = None
 
         # Debug / info
         self.last_line_abl: Optional[int] = None
@@ -676,13 +684,15 @@ class CatheterReplayer:
                             "json_index": abl_idx,
                             "valid": abl_valid,
                         },
-                        "Ref_01": {
-                            "data": ref_entry["data"],
-                            "json_index": ref_entry["json_index"],
-                            "valid": ref_valid,
-                        }
-                        if ref_entry
-                        else None,
+                        "Ref_01": (
+                            {
+                                "data": ref_entry["data"],
+                                "json_index": ref_entry["json_index"],
+                                "valid": ref_valid,
+                            }
+                            if ref_entry
+                            else None
+                        ),
                         "timestamp": abl["timestamp"],
                     }
                 )
@@ -698,12 +708,23 @@ class CatheterReplayer:
                 }
             self.pNode.validityTable = vt
 
+            # --------------------------------------------------------------
+            # FIX: convert [sec, nsec] -> float seconds before subtracting
+            # --------------------------------------------------------------
+            def ts_to_float(ts):
+                if isinstance(ts, list) and len(ts) == 2:
+                    return ts[0] + ts[1] * 1e-9
+                return float(ts)
+
             deltas: List[float] = []
             for k in range(1, min(len(self.matrix_history), 500)):
                 t1 = self.matrix_history[k - 1]["timestamp"]
                 t2 = self.matrix_history[k]["timestamp"]
-                if t1 is not None and t2 is not None and t2 > t1:
-                    deltas.append(t2 - t1)
+                if t1 is not None and t2 is not None:
+                    f1 = ts_to_float(t1)
+                    f2 = ts_to_float(t2)
+                    if f2 > f1:
+                        deltas.append(f2 - f1)
 
             if deltas:
                 median_delta = np.median(deltas)
@@ -728,9 +749,20 @@ class CatheterReplayer:
 
             self.current_idx = 0
             self.jump_to_frame(0)
-            self.update_timer_speed()
 
-            logging.info(f"CatheterReplayer: Loaded {total_frames} bundles, native interval ≈ {self.native_interval_ms} ms")
+            # --------------------------------------------------------------
+            # SAFETY FIX: DO NOT AUTO-START PLAYBACK
+            # --------------------------------------------------------------
+            self.timer.stop()
+            self.ui.btn_play_stop.setChecked(False)
+            self.ui.btn_play_stop.setText("Play Fwd")
+            self.ui.btn_rev.setChecked(False)
+            self.ui.btn_rev.setText("Play Rev")
+            self.play_direction = 1
+
+            logging.info(
+                f"CatheterReplayer: Loaded {total_frames} bundles, native interval ~= {self.native_interval_ms} ms"
+            )
 
         except Exception as e:
             logging.error(f"CatheterReplayer: Failed to load file: {e}")
@@ -773,7 +805,14 @@ class CatheterReplayer:
             self.last_line_ref = ref_entry["json_index"]
 
         ts = bundle.get("timestamp", 0.0)
-        elapsed = ts - self.start_timestamp if self.start_timestamp else 0.0
+
+        def ts_to_float(ts):
+            if isinstance(ts, list) and len(ts) == 2:
+                return ts[0] + ts[1] * 1e-9
+            return float(ts)
+
+        elapsed = ts_to_float(ts) - ts_to_float(self.start_timestamp) if self.start_timestamp else 0.0
+
         minutes = int(elapsed // 60)
         seconds = int(elapsed % 60)
         millis = int((elapsed - int(elapsed)) * 1000)
@@ -944,100 +983,64 @@ class CatheterReplayer:
     # ------------------------------------------------------------------
     # Timer speed
     # ------------------------------------------------------------------
-    def update_timer_speed(self) -> None:
-        """
-        Update internal speed factor based on UI combo and adjust timer interval.
-        """
-        if not self.ui:
-            self._speed_factor = 1.0
+    def update_timer_speed(self):
+        if not self.matrix_history:
             return
 
-        text = self.ui.speed_combo.currentText  # property, not callable
+        # Speed factor from combo
+        idx = self.ui.speed_combo.currentIndex if self.ui else 1
+        factors = [0.5, 1.0, 1.5]
+        self._speed_factor = factors[idx] if 0 <= idx < len(factors) else 1.0
 
+        # Base interval from JSONL
+        base_ms = max(5, int(self.native_interval_ms))
+
+        # Effective interval
+        interval_ms = int(base_ms / self._speed_factor)
+
+        # Hard cap: 12 FPS -> 83 ms
+        interval_ms = max(interval_ms, 83)
+
+        # Configure timer
+        self.timer.stop()
         try:
-            if text.endswith("x"):
-                self._speed_factor = float(text[:-1])
-            else:
-                self._speed_factor = float(text)
+            self.timer.setTimerType(qt.Qt.PreciseTimer)
         except Exception:
-            self._speed_factor = 1.0
-
-        if self._playbackMode == "frame":
-            interval = max(5, int(self.native_interval_ms / max(self._speed_factor, 0.01)))
-        else:
-            interval = 10  # small tick; real-time mode uses wall-clock to pick frame
-
-        if self.timer:
-            self.timer.setInterval(interval)
+            pass
+        self.timer.start(interval_ms)
 
     # ------------------------------------------------------------------
     # Auto-play loop
     # ------------------------------------------------------------------
-    def process_auto_play(self) -> None:
+    def process_auto_play(self):
+        if not getattr(self.pNode, "replayModeActive", False):
+            return
         if not self.matrix_history:
             return
 
-        if not getattr(self.pNode, "replayModeActive", False):
-            self.stop_playback()
-            return
+        # Advance frame
+        next_idx = self.current_idx + self.play_direction
+        next_idx = int(np.clip(next_idx, 0, len(self.matrix_history) - 1))
+        self.jump_to_frame(next_idx)
 
-        if self._playbackMode == "frame":
-            next_idx = self.current_idx + self.play_direction
-            if next_idx < 0 or next_idx >= len(self.matrix_history):
-                self.stop_playback()
-                if self.ui:
-                    if self.play_direction > 0:
-                        self.ui.btn_play_stop.setChecked(False)
-                        self.ui.btn_play_stop.setText("Play Fwd")
-                    else:
-                        self.ui.btn_rev.setChecked(False)
-                        self.ui.btn_rev.setText("Play Rev")
-                return
-            self.jump_to_frame(next_idx)
-        else:
-            if not self._elapsedTimer.isValid() or self._replayStartWallMs is None:
-                self._elapsedTimer.start()
-                self._replayStartWallMs = self._elapsedTimer.elapsed()
+        # FPS measurement
+        now_ms = self._elapsedTimer.elapsed()
 
-            now_ms = self._elapsedTimer.elapsed()
-            elapsed_ms = now_ms - self._replayStartWallMs
-            elapsed_s = elapsed_ms / 1000.0
+        if self._fpsWindowStartMs is None:
+            self._fpsWindowStartMs = now_ms
+            self._fpsFrameCount = 0
 
-            if self.start_timestamp is None:
-                self.start_timestamp = self.matrix_history[0].get("timestamp", 0.0)
+        self._fpsFrameCount += 1
 
-            target_time = self.start_timestamp + elapsed_s * max(self._speed_factor, 0.01)
+        if now_ms - self._fpsWindowStartMs >= 1000:
+            elapsed_sec = (now_ms - self._fpsWindowStartMs) / 1000.0
+            self._currentFPS = self._fpsFrameCount / elapsed_sec
 
-            if self.play_direction < 0:
-                target_time = (
-                    self.start_timestamp
-                    + max(0.0, (self.matrix_history[-1].get("timestamp", self.start_timestamp) - self.start_timestamp))
-                    - elapsed_s * max(self._speed_factor, 0.01)
-                )
+            self._fpsFrameCount = 0
+            self._fpsWindowStartMs = now_ms
 
-            best_idx = self.current_idx
-            best_dt = float("inf")
-            for i, bundle in enumerate(self.matrix_history):
-                ts = bundle.get("timestamp", None)
-                if ts is None:
-                    continue
-                dt = abs(ts - target_time)
-                if dt < best_dt:
-                    best_dt = dt
-                    best_idx = i
-
-            if best_idx < 0 or best_idx >= len(self.matrix_history):
-                self.stop_playback()
-                if self.ui:
-                    if self.play_direction > 0:
-                        self.ui.btn_play_stop.setChecked(False)
-                        self.ui.btn_play_stop.setText("Play Fwd")
-                    else:
-                        self.ui.btn_rev.setChecked(False)
-                        self.ui.btn_rev.setText("Play Rev")
-                return
-
-            self.jump_to_frame(best_idx)
+            if self.ui:
+                self.ui.fps_label.setText(f"FPS: {self._currentFPS:.1f}")
 
     # ------------------------------------------------------------------
     # Cleanup

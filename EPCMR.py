@@ -13,7 +13,6 @@ import ctk
 import slicer
 from slicer.ScriptedLoadableModule import *
 
-
 # ---- 2. Path Injection (MUST BE FIRST) ----
 # Excellent path injection code: This script automatically handles its own
 # subfolder structure by dynamically locating the current directory. It appends
@@ -207,6 +206,10 @@ class EPCMRLogic(ScriptedLoadableModuleLogic):
             logging.error(f"EPCMRLogic: Failed to create CatheterReplayer: {e}")
             self._replayerInstance = None
             return None
+
+    def restoreDefaultLighting(self):
+        if hasattr(self, "sceneManager") and self.sceneManager:
+            self.sceneManager.lightsManager.resetLighting()
 
     # ------------------------------------------------------------------
     # 1. Raw MRML node creation (Slicer API)
@@ -464,13 +467,18 @@ class EPCMRLogic(ScriptedLoadableModuleLogic):
                 self.sceneManager.setupCustomOrientationMarker()
             if hasattr(self.sceneManager, "changeViewAxisLabels"):
                 self.sceneManager.changeViewAxisLabels()
+
             # Lighting must run AFTER models + display nodes exist
             # QTimer ensures lighting runs after the renderer has geometry
-            if hasattr(self.sceneManager, "setupLighting"):
-                qt.QTimer.singleShot(0, self.sceneManager.setupLighting)
+            if hasattr(self.sceneManager, "lightsManager"):
+                qt.QTimer.singleShot(0, self.sceneManager.lightsManager.setupLighting)
 
             # Enforce black background in all 3D views
             qt.QTimer.singleShot(0, self.setThreeDViewBackgroundToBlack)
+
+            # Emissive catheter normalization (must run after lighting + models)
+            if hasattr(self.sceneManager, "normalizeAllCathetersEmissive"):
+                qt.QTimer.singleShot(50, self.sceneManager.normalizeAllCathetersEmissive)
 
         # ------------------------------------------------------------------
         # OpenIGTLink connection (Slicer 5.7+ timing-safe)
@@ -1607,6 +1615,51 @@ class EPCMRWidget(ScriptedLoadableModuleWidget):
 
         logging.info(f"[HANDLE] label={label}, cachedTipValid={logic._cachedTipValid}, tip={logic._cachedTipPos}")
 
+    def onRestoreLightingButtonClicked(self):
+        """Triggered automatically when users press the lighting restoration UI element."""
+        # 1. Primary Path: Trust the direct instance generated inside setup()
+        activeLogic = getattr(self, "logic", None)
+
+        # 2. Fallback Path: If self.logic is missing, query Slicer's core module manager
+        if not activeLogic:
+            try:
+                activeLogic = slicer.modules.epcmr.logic()
+            except Exception:
+                pass
+
+        # 3. Execution chain evaluation
+        if activeLogic and hasattr(activeLogic, "restoreDefaultLighting"):
+            activeLogic.restoreDefaultLighting()
+            print("EPCMR Lighting: Restored via Logic interface bridge.")
+
+        elif activeLogic and hasattr(activeLogic, "restoreDefaultLighting"):
+            activeLogic.restoreDefaultLighting()
+
+        else:
+            # Absolute last resort: Scrape all initialized model nodes to find a live reference
+            managerFound = False
+            if hasattr(self, "_parameterNode") and self._parameterNode:
+                # Attempt to execute setupLighting manually if accessible in global script space
+                try:
+                    import sys
+
+                    # Search for any active scene manager registered across module namespaces
+                    for mod in list(sys.modules.values()):
+                        if hasattr(mod, "SceneManager") or "SceneManager" in str(mod):
+                            lm = slicer.app.layoutManager()
+                            if lm:
+                                # Fallback loop execution over views
+                                for i in range(lm.threeDViewCount):
+                                    view = lm.threeDWidget(i).threeDView()
+                                    view.forceRender()
+                                managerFound = True
+                                break
+                except Exception:
+                    pass
+
+            if not managerFound:
+                slicer.util.errorDisplay("Unable to restore lighting parameters: Module logic core instance missing.")
+
     # ----------------------------------------------------------------------
     # Widget setup
     # ----------------------------------------------------------------------
@@ -1629,6 +1682,9 @@ class EPCMRWidget(ScriptedLoadableModuleWidget):
         # ------------------------------------------------------------------
         # Logic instance
         # ------------------------------------------------------------------
+        # Explicitly construct our true Python Logic subclass. This avoids the
+        # Slicer startup race condition where querying the module layout engine
+        # returns an uninitialized generic C++ vtkSlicer class object.
         self.logic = EPCMRLogic()
         print(f"DEBUG: Logic initialized: {self.logic}")
 
@@ -1652,9 +1708,31 @@ class EPCMRWidget(ScriptedLoadableModuleWidget):
 
         # Free Angulator launcher button
         self.freeAngulatorButton = qt.QPushButton("Open Free Angulator")
-        self.freeAngulatorButton.toolTip = "Open the Free Angulator floating panel for slice angulation and geometry storage."
+        self.freeAngulatorButton.toolTip = (
+            "Open the Free Angulator floating panel for slice angulation and geometry storage."
+        )
         selectionLayout.addRow("Free Angulation:", self.freeAngulatorButton)
         self.freeAngulatorButton.clicked.connect(self.onOpenFreeAngulator)
+
+        # ------------------------------------------------------------------
+        # EPCMR View & Lighting Controls
+        # ------------------------------------------------------------------
+        lightingCollapsibleButton = ctk.ctkCollapsibleButton()
+        lightingCollapsibleButton.text = "EPCMR Lighting Controls"
+        lightingCollapsibleButton.collapsed = True  # <-- collapse on startup
+        self.layout.addWidget(lightingCollapsibleButton)
+
+        lightingLayout = qt.QFormLayout(lightingCollapsibleButton)
+
+        self.restoreLightingButton = qt.QPushButton("Restore EPCMR Default Lighting")
+        self.restoreLightingButton.toolTip = (
+            "Clears current 3D view lights and resets standard CARTO-style lighting profiles."
+        )
+        self.restoreLightingButton.name = "RestoreLightingButton"
+
+        # Use addRow for QFormLayout to prevent the container frame from swallowing touch events
+        lightingLayout.addRow(self.restoreLightingButton)
+        self.restoreLightingButton.clicked.connect(self.onRestoreLightingButtonClicked)
 
         # ------------------------------------------------------------------
         # Stacked widget for submodules
@@ -1795,6 +1873,16 @@ class EPCMRWidget(ScriptedLoadableModuleWidget):
         """Invoked when the module is closed or reloaded."""
 
         # ------------------------------------------------------------
+        # Disconnect Layout Manager Signals (Dynamic Lighting Guard)
+        # ------------------------------------------------------------
+        try:
+            lm = slicer.app.layoutManager()
+            if lm and hasattr(self, "onRestoreLightingButtonClicked"):
+                lm.layoutChanged.disconnect(self.logic.restoreDefaultLighting)
+        except Exception:
+            pass
+
+        # ------------------------------------------------------------
         # Detach SCENE observer (NodeAddedEvent for STRING TextNodes)
         # ------------------------------------------------------------
         if hasattr(self, "_sceneObserverTag") and self._sceneObserverTag:
@@ -1852,6 +1940,19 @@ class EPCMRWidget(ScriptedLoadableModuleWidget):
     # Reload
     # ----------------------------------------------------------------------
     def onReload(self):
+        # --- Pre-reload SceneManager tracking flag and pipeline reset ---
+        try:
+            oldLogic = slicer.util.getModuleLogic("EPCMR")
+            if oldLogic and hasattr(oldLogic, "sceneManager") and oldLogic.sceneManager:
+                sm = oldLogic.sceneManager
+                # Force-disable the guard flag so setupLighting can process fresh code edits on reload
+                sm._lightingInstalled = False
+                # Revert catheter material pipelines and clear tracked lights cleanly
+                sm.cleanup()
+                logging.info("EPCMR: Pre-reload SceneManager lighting flags cleared successfully.")
+        except Exception as e:
+            logging.warning(f"EPCMR: Pre-reload lighting flush skipped or failed: {e}")
+
         try:
             self.cleanup()
         except Exception as e:

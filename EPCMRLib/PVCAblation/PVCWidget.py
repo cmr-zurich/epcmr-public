@@ -72,6 +72,7 @@ class PVCWidget(qt.QWidget):
         # --- Catheter Replay Section ---
         self.replayerCollapsibleButton = ctk.ctkCollapsibleButton()
         self.replayerCollapsibleButton.text = "Catheter Replay"
+        self.replayerCollapsibleButton.collapsed = True  # collapse on startup
         layout.addWidget(self.replayerCollapsibleButton)
 
         replayerFormLayout = qt.QFormLayout(self.replayerCollapsibleButton)

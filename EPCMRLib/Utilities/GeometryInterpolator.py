@@ -92,6 +92,21 @@ class GeometryInterpolator:
             # Build LAT array
             lat_arr, scalar_name = self._build_activation_array(markupsNode, n)
 
+            # ------------------------------------------------------------------
+            # EPSILON FIX: avoid flat-field when first two LAT values are identical
+            # ------------------------------------------------------------------
+            lat_np = numpy_support.vtk_to_numpy(lat_arr).astype(float, copy=True)
+
+            if len(lat_np) >= 2 and np.isclose(lat_np[0], lat_np[1]):
+                epsilon = 1e-6
+                lat_np[1] += epsilon
+
+                # Replace VTK array with corrected version
+                lat_arr = numpy_support.numpy_to_vtk(lat_np, deep=True)
+                lat_arr.SetName(scalar_name)
+
+                logging.debug(f"Injected epsilon into LAT: {lat_np[0]} -> {lat_np[1]}")
+
             # Source polydata (mapping points)
             src = vtk.vtkPolyData()
             pts = vtk.vtkPoints()
@@ -188,7 +203,7 @@ class GeometryInterpolator:
         if dn:
             dn.SetActiveScalarName("Voltage")
             dn.SetScalarVisibility(True)
-            dn.SetOpacity(0.40)
+            dn.SetOpacity(0.56)
 
             # Apply CARTO-style voltage colormap (normalized to [low, high])
             self.colorMapper.apply_voltage_colormap(self.clonedRA, low, high)
