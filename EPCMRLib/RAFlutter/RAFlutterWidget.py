@@ -580,7 +580,8 @@ class RAFlutterWidget(qt.QWidget):
         self.btnClearAblation.clicked.connect(self.onClearAblationPoints)
         mgmtLayout.addWidget(self.btnClearAblation)
 
-        self.restoreBackupButton = qt.QPushButton("? Restore Backup?")
+        # self.restoreBackupButton = qt.QPushButton("🔄 Restore Backup…")
+        self.restoreBackupButton = qt.QPushButton("\U0001f504 Restore Backup…")
         self.restoreBackupButton.setFixedSize(160, 28)
         self.restoreBackupButton.clicked.connect(self.onRestoreBackupClicked)
         mgmtLayout.addWidget(self.restoreBackupButton)

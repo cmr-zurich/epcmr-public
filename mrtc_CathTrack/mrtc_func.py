@@ -2,7 +2,7 @@
 """
 Created on Thu Jul 17 11:35:00 2025
 
-@author: dep07197
+@author: Christian Stehning / Jouke Smink, Philips Clinical Science
 """
 
 import socket
@@ -24,38 +24,7 @@ protocol_version = version_major.to_bytes(4, 'little') + version_minor.to_bytes(
 MaxDataLength = 4096  # Restricted value for test purposes, works fine but not needed
 MaxDataLength = 2147483647  # maximum value for a signed integer
 request_token = 5685        # random number for starting the request tokes which are incremented to make them different
-
-#======================================================
-# These are fixed settings for the MRTC communication
-#======================================================
-
-# PFLH 1.5T
-remote_ip_address = "192.168.113.107"
-my_ip_address = "192.168.113.108"
-
-# Herzzentrum Leipzig
-#remote_ip_address = "10.186.47.41"
-#my_ip_address = "10.186.47.66"
-
-# Demo Best
-#remote_ip_address = "130.144.173.74"
-#my_ip_address = "130.144.173.79"
-
-
-exam_card_id_path = "pySuite"
-protocol_name1 = "Survey" # Replace this by the Roadmap scan one day
-protocol_name2 = "SilentTracking"
-init_serv_address = remote_ip_address
-init_serv_port = 8174
-tc_scan_serv_address = my_ip_address
-tc_scan_serv_port = 12345
-dicom_server_address = my_ip_address
-dicom_server_port = 105
-dicom_aetitle = "AESIGNET"
-ntp_server_address = my_ip_address
-ntp_server_port = 123
-active_user = "Gyrotest"
-#active_user = "MRUser"
+database_version = "00000000-00-00"
 
 
 def get_local_time_zone_id():        
@@ -204,7 +173,7 @@ def message_type_to_name(val):
 # 2. Wait for a connection from the scanner(s2)
 # 3. Receive a TakeScanControlRequest and send a response (m2 and m3 via S2)
 # 4. Receive StartScanResponse (m4 via s1)
-def start_scan_and_take_scan_control_messages(message_type1, message_type3, m1, m2, m3, m4, ip_address, port):
+def start_scan_and_take_scan_control_messages(message_type1, message_type3, m1, m2, m3, m4, ip_address, port, tc_scan_serv_address, tc_scan_serv_port):
     m1.request_token = get_request_token()
     payload = m1.SerializeToString()
     pdu = pdu_from_payload_and_message_type(payload, message_type1)
@@ -235,7 +204,7 @@ def start_scan_and_take_scan_control_messages(message_type1, message_type3, m1, 
     pdu2 = s1.recv(MaxDataLength)
     payload, message_type = payload_and_message_type_from_pdu(pdu2)
     if message_type == mrtc_pb2.MessageType.MESSAGE_TYPE_FAULT_RESPONSE:
-        handle_fault_message(payload, f"{client_address}:{scan_control_server_port} receiving: ")
+        handle_fault_message(payload, f"{client_address}:{tc_scan_serv_port} receiving: ")
     else:
         m4.ParseFromString(payload)
         if trace_pdu:
