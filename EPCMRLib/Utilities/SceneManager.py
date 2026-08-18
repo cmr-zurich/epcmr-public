@@ -8,9 +8,35 @@ import slicer
 import vtk
 
 from EPCMRLib.EPCMRParameterNode import EPCMRParameterNode
+from EPCMRLib.Utilities.MaterialManager import MaterialManager
 from EPCMRLib.Utilities.LightsManager import LightsManager
 
 VTK_VERSION = (vtk.vtkVersion.GetVTKMajorVersion(), vtk.vtkVersion.GetVTKMinorVersion())
+
+# ---------------------------------------------------------------------------
+# EPCMR Architecture: SceneManager <-> MaterialManager
+#
+# SceneManager:
+#   - Orchestrates high-level scene behavior.
+#   - Decides which anatomical or clinical nodes should receive rim glow,
+#     overlays, normalization, or resets.
+#   - Owns ANATOMY_MAP, lighting rig, scalar bars, markups observers,
+#     backups, and RA/voltage mapping pipelines.
+#   - Delegates all material-related operations to MaterialManager.
+#
+# MaterialManager:
+#   - Executes rim glow presets, rim overlays, and material resets.
+#   - Provides idempotent, deterministic material operations.
+#   - Never decides which nodes to modify; only performs the work requested
+#     by SceneManager.
+#   - Ensures clean separation of concerns and prevents SceneManager from
+#     accumulating rendering or material logic.
+#
+# Result:
+#   - SceneManager remains a pure coordinator.
+#   - MaterialManager owns all shading and material responsibilities.
+#   - Architecture is symmetric with LightsManager and easier to maintain.
+# ---------------------------------------------------------------------------
 
 
 def is_vtk_at_least(major: int, minor: int) -> bool:
@@ -36,6 +62,8 @@ class SceneManager:
         (delegates to GeometryInterpolator via ModelObserver facade)
       - Maintain dual scalar bars (Activation / Voltage) with legends
         reflecting the REAL data range of the RA clone
+      - Delegate all rim-glow and material operations to MaterialManager
+        (SceneManager orchestrates, MaterialManager executes)
 
     Restore-safety:
       - During backup restore, isRestoringBackup is set True.
@@ -63,7 +91,9 @@ class SceneManager:
         # ---------------------------------------------------------
         # Manage Rim Shading/Glow
         # ---------------------------------------------------------
-
+        # Rim glow is now handled by MaterialManager (idempotent)
+        # SceneManager only orchestrates which nodes receive rim glow.
+        self.materialManager = MaterialManager(self)
         self.rimGlowEnabled = False
 
         # ---------------------------------------------------------
@@ -173,19 +203,6 @@ class SceneManager:
     # Rim Shading/Glow
     # ------------------------------------------------------------------
 
-    # Strong Preset
-    def boostRimGlow(self, modelNode):
-        dn = modelNode.GetDisplayNode()
-        if not dn:
-            return
-
-        dn.SetBackfaceCulling(False)
-        dn.SetAmbient(0.25)
-        dn.SetDiffuse(0.95)
-        dn.SetSpecular(0.35)
-        dn.SetPower(30)
-        dn.SetOpacity(0.75)
-
     # Reset preset (neutral Slicer defaults)
     def resetRimGlow(self, modelNode):
         dn = modelNode.GetDisplayNode()
@@ -207,7 +224,8 @@ class SceneManager:
         for node in slicer.util.getNodesByClass("vtkMRMLModelNode"):
             name = node.GetName().lower()
             if any(k in name for k in keywords):
-                self.boostRimGlow(node)
+                # Delegate to MaterialManager
+                self.materialManager.applyRimGlow(node)
 
     def resetRimGlowOnAnatomy(self):
         keywords = []
@@ -217,15 +235,18 @@ class SceneManager:
         for node in slicer.util.getNodesByClass("vtkMRMLModelNode"):
             name = node.GetName().lower()
             if any(k in name for k in keywords):
-                self.resetRimGlow(node)
+                # Delegate to MaterialManager
+                self.materialManager.resetRimMaterial(node)
 
     def toggleRimGlow(self):
         if self.rimGlowEnabled:
-            self.resetRimGlowOnAnatomy()
+            # Full restore via MaterialManager
+            self.materialManager.restoreAllAnatomyAppearance()
             self.rimGlowEnabled = False
             print("EPCMR: Rim glow disabled.")
         else:
-            self.applyRimGlowToAnatomy()
+            # Full apply via MaterialManager
+            self.materialManager.boostRimGlowOnAllAnatomy()
             self.rimGlowEnabled = True
             print("EPCMR: Rim glow enabled.")
 
@@ -504,7 +525,8 @@ class SceneManager:
                 if hasattr(self, "normalizeAnatomyAppearance"):
                     self.normalizeAnatomyAppearance(modelNode)
                 if getattr(self, "rimGlowEnabled", False):
-                    self.boostRimGlow(modelNode)
+                    # Delegate rim glow to MaterialManager
+                    self.materialManager.applyRimGlow(modelNode)
 
                 return True
 
@@ -555,8 +577,8 @@ class SceneManager:
         normals.SetSplitting(0)
         normals.SetConsistency(1)
         normals.SetAutoOrientNormals(1)
-        normals.SetComputePointNormals(1)  # <-- fixed
-        normals.SetComputeCellNormals(0)
+        normals.SetComputePointNormal(1)  # <-- fixed
+        normals.SetComputeCellNormal(0)
         normals.Update()
 
         polyData.ShallowCopy(normals.GetOutput())
@@ -576,88 +598,6 @@ class SceneManager:
                     self.normalizeAnatomyAppearance(modelNode)
                 except Exception as e:
                     logging.error(f"EPCMR: normalizeAnatomyAppearance failed for {name}: {e}")
-
-    def _applyStrongRimOverlay(self, modelNode, overlaySuffix="_rimOverlay"):
-        """
-        Idempotent rim overlay:
-          - Finds or creates a single overlay model for the given modelNode.
-          - Reuses existing overlay if present (no duplicates).
-          - Updates overlay geometry if base geometry changed.
-          - Applies strong rim-like material (halo effect).
-          - Follows base transforms.
-          - Does not save overlay with scene.
-        """
-        import vtk
-
-        if not modelNode:
-            return None
-
-        baseName = modelNode.GetName() or "Anatomy"
-        overlayName = f"{baseName}{overlaySuffix}"
-
-        # 1. Try to find existing overlay
-        overlay = slicer.util.getFirstNodeByName(overlayName)
-        if overlay and overlay.IsA("vtkMRMLModelNode"):
-            # Update geometry if base changed
-            try:
-                basePD = modelNode.GetPolyData()
-                if basePD:
-                    pd = vtk.vtkPolyData()
-                    pd.ShallowCopy(basePD)
-                    overlay.SetAndObservePolyData(pd)
-            except Exception:
-                pass
-        else:
-            # 2. Create new overlay
-            overlay = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode", overlayName)
-            try:
-                basePD = modelNode.GetPolyData()
-                if basePD:
-                    pd = vtk.vtkPolyData()
-                    pd.ShallowCopy(basePD)
-                    overlay.SetAndObservePolyData(pd)
-            except Exception:
-                pass
-
-        # 3. Ensure display node exists
-        try:
-            overlay.CreateDefaultDisplayNodes()
-            dn = overlay.GetDisplayNode()
-        except Exception:
-            return overlay
-
-        if not dn:
-            return overlay
-
-        # 4. Strong rim-like material (halo)
-        try:
-            dn.SetLighting(True)
-            dn.SetShading(True)
-            dn.SetOpacity(0.25)
-
-            dn.SetAmbient(0.8)  # bright base
-            dn.SetDiffuse(0.1)  # minimal front-face shading
-            dn.SetSpecular(1.0)  # strong highlight
-            dn.SetPower(80.0)  # tight rim band
-
-            dn.SetBackfaceCulling(False)
-            dn.SetEdgeVisibility(False)
-        except Exception:
-            pass
-
-        # 5. Follow base transform
-        try:
-            overlay.SetAndObserveTransformNodeID(modelNode.GetTransformNodeID())
-        except Exception:
-            pass
-
-        # 6. Do not save overlay with scene
-        try:
-            overlay.SetSaveWithScene(False)
-        except Exception:
-            pass
-
-        return overlay
 
     def boostRimGlowOnAllAnatomy(self):
         """
@@ -679,347 +619,12 @@ class SceneManager:
           - Calls self._applyStrongRimOverlay(node) (idempotent overlay).
           - Returns list of affected node names.
         """
-        import logging
-        import re
-
-        logger = getattr(self, "logger", logging)
-
-        # Build canonical -> alias list mapping from ANATOMY_MAP
-        token_map = {}  # canonical_key -> dict { "aliases": [...], "color": (r,g,b) or None, "attr": attrname or None }
-        anatomy_map = getattr(self, "ANATOMY_MAP", None)
-
-        try:
-            if isinstance(anatomy_map, dict):
-                for canonical, entry in anatomy_map.items():
-                    try:
-                        aliases = []
-                        color = None
-                        attr = None
-                        if isinstance(entry, dict):
-                            aliases = [str(k).strip().lower() for k in entry.get("keywords", []) if k]
-                            color = entry.get("color", None)
-                            attr = entry.get("attr", None)
-                        else:
-                            # entry might be a simple token or list
-                            if isinstance(entry, (list, tuple, set)):
-                                aliases = [str(x).strip().lower() for x in entry if x]
-                            else:
-                                aliases = [str(entry).strip().lower()]
-                        # always include canonical key itself
-                        if canonical:
-                            aliases.insert(0, str(canonical).strip().lower())
-                        # dedupe while preserving order
-                        seen = set()
-                        aliases = [a for a in aliases if a and not (a in seen or seen.add(a))]
-                        token_map[str(canonical)] = {"aliases": aliases, "color": color, "attr": attr}
-                    except Exception:
-                        logger.debug("boostRimGlowOnAllAnatomy: malformed ANATOMY_MAP entry for %s", str(canonical))
-                        continue
-            elif anatomy_map:
-                # treat as iterable of tokens
-                for entry in anatomy_map:
-                    e = str(entry).strip()
-                    if e:
-                        token_map[e] = {"aliases": [e.lower()], "color": None, "attr": None}
-            else:
-                # fallback minimal map
-                token_map = {
-                    "SVC": {"aliases": ["svc"], "color": None, "attr": None},
-                    "IVC": {"aliases": ["ivc"], "color": None, "attr": None},
-                }
-        except Exception:
-            token_map = {
-                "SVC": {"aliases": ["svc"], "color": None, "attr": None},
-                "IVC": {"aliases": ["ivc"], "color": None, "attr": None},
-            }
-
-        # Helper: normalize a model name into searchable tokens
-        def _tokenize_name(name):
-            if not name:
-                return []
-            s = re.sub(r"[^a-z0-9]+", " ", name.lower())
-            tokens = [t for t in s.split() if t]
-            return tokens
-
-        # Helper: resolve attr -> node(s)
-        def _resolve_attr_node(attrname):
-            """
-            Try to resolve an attribute name on self to a node object or node name/ID.
-            Returns a list of vtkMRMLNode objects (possibly empty).
-            """
-            resolved = []
-            if not attrname:
-                return resolved
-            try:
-                if hasattr(self, attrname):
-                    val = getattr(self, attrname)
-                    # If it's already a node
-                    try:
-                        if val and hasattr(val, "IsA") and val.IsA("vtkMRMLNode"):
-                            resolved.append(val)
-                            return resolved
-                    except Exception:
-                        pass
-                    # If it's a string, try to find node by name or id
-                    try:
-                        sval = str(val)
-                        node = slicer.util.getFirstNodeByName(sval)
-                        if node:
-                            resolved.append(node)
-                            return resolved
-                        # try by id
-                        node = slicer.mrmlScene.GetNodeByID(sval)
-                        if node:
-                            resolved.append(node)
-                            return resolved
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            return resolved
-
-        # Collect all model nodes once
-        try:
-            model_nodes = list(slicer.util.getNodesByClass("vtkMRMLModelNode"))
-        except Exception:
-            model_nodes = []
-            try:
-                it = slicer.mrmlScene.GetNodes()
-                it.InitTraversal()
-                for i in range(it.GetNumberOfItems()):
-                    n = it.GetItemAsObject(i)
-                    try:
-                        if n.IsA("vtkMRMLModelNode"):
-                            model_nodes.append(n)
-                    except Exception:
-                        continue
-            except Exception:
-                model_nodes = []
-
-        affected = []
-        applied_nodes = set()  # track node IDs to avoid duplicates
-
-        # First, include nodes referenced by attrs (explicit mapping)
-        for canonical, meta in token_map.items():
-            attrname = meta.get("attr", None)
-            if attrname:
-                try:
-                    resolved = _resolve_attr_node(attrname)
-                    for node in resolved:
-                        try:
-                            nid = node.GetID()
-                            if nid in applied_nodes:
-                                continue
-                            # ensure display node exists
-                            dn = node.GetDisplayNode()
-                            if not dn:
-                                try:
-                                    node.CreateDefaultDisplayNodes()
-                                    dn = node.GetDisplayNode()
-                                except Exception:
-                                    logger.warning(
-                                        "boostRimGlowOnAllAnatomy: could not create display node for %s", node.GetName()
-                                    )
-                                    continue
-
-                            # ALWAYS re-apply rim glow (no permanent skip)
-                            try:
-                                color = meta.get("color", None)
-                                if color is not None:
-                                    try:
-                                        self.boostRimGlow(node, color=color)
-                                    except TypeError:
-                                        self.boostRimGlow(node)
-                                else:
-                                    self.boostRimGlow(node)
-
-                                # Apply idempotent rim overlay
-                                try:
-                                    self._applyStrongRimOverlay(node)
-                                except Exception as e:
-                                    logger.warning(
-                                        "boostRimGlowOnAllAnatomy: rim overlay failed for %s: %s",
-                                        node.GetName(),
-                                        str(e),
-                                    )
-
-                                # Mark node
-                                if hasattr(dn, "SetAttribute"):
-                                    dn.SetAttribute("EPCMR.RimGlowApplied", "true")
-
-                                affected.append(node.GetName())
-                                applied_nodes.add(nid)
-                                logger.info(
-                                    "boostRimGlowOnAllAnatomy: applied rim-glow to %s via attr %s",
-                                    node.GetName(),
-                                    attrname,
-                                )
-                            except Exception as e:
-                                logger.exception(
-                                    "boostRimGlowOnAllAnatomy: failed to apply rim-glow to %s: %s",
-                                    node.GetName(),
-                                    str(e),
-                                )
-                        except Exception:
-                            continue
-                except Exception:
-                    continue
-
-        # Now match by keywords against model names
-        for node in model_nodes:
-            try:
-                nid = node.GetID()
-                if nid in applied_nodes:
-                    continue
-                name = (node.GetName() or "").strip()
-            except Exception:
-                continue
-            if not name:
-                continue
-            lname = name.lower()
-            name_tokens = _tokenize_name(name)
-
-            matched = False
-            matched_meta = None
-            matched_alias = None
-
-            for canonical, meta in token_map.items():
-                aliases = meta.get("aliases", []) or []
-                for alias in aliases:
-                    if not alias:
-                        continue
-                    # token equality match
-                    if alias in name_tokens:
-                        matched = True
-                        matched_meta = meta
-                        matched_alias = alias
-                        break
-                    # substring fallback
-                    if alias in lname:
-                        matched = True
-                        matched_meta = meta
-                        matched_alias = alias
-                        break
-                if matched:
-                    break
-
-            if not matched:
-                continue
-
-            # Ensure display node exists
-            dn = node.GetDisplayNode()
-            if not dn:
-                try:
-                    node.CreateDefaultDisplayNodes()
-                    dn = node.GetDisplayNode()
-                except Exception:
-                    logger.warning("boostRimGlowOnAllAnatomy: could not create display node for %s", name)
-                    continue
-
-            # ALWAYS re-apply rim glow (no permanent skip)
-            try:
-                color = matched_meta.get("color", None) if matched_meta else None
-                if color is not None:
-                    try:
-                        self.boostRimGlow(node, color=color)
-                    except TypeError:
-                        self.boostRimGlow(node)
-                else:
-                    self.boostRimGlow(node)
-
-                # Apply idempotent rim overlay
-                try:
-                    self._applyStrongRimOverlay(node)
-                except Exception as e:
-                    logger.warning(
-                        "boostRimGlowOnAllAnatomy: rim overlay failed for %s: %s",
-                        name,
-                        str(e),
-                    )
-
-                # Mark node
-                try:
-                    if hasattr(dn, "SetAttribute"):
-                        dn.SetAttribute("EPCMR.RimGlowApplied", "true")
-                except Exception:
-                    pass
-
-                affected.append(name)
-                applied_nodes.add(nid)
-                logger.info("boostRimGlowOnAllAnatomy: applied rim-glow to %s (matched %s)", name, matched_alias)
-            except Exception as e:
-                logger.exception("boostRimGlowOnAllAnatomy: failed to apply rim-glow to %s: %s", name, str(e))
-                continue
-
-        # Force a render so changes are visible immediately
-        try:
-            slicer.util.forceRenderAllViews()
-        except Exception:
-            pass
-
-        return affected
+        # Delegate to MaterialManager, preserving behavior
+        return self.materialManager.boostRimGlowOnAllAnatomy()
 
     # ------------------------------------------------------------------
     # Rim-glow reversal and anatomy appearance restoration
     # ------------------------------------------------------------------
-
-    def _removeRimOverlay(self, modelNode, overlaySuffix="_rimOverlay"):
-        """
-        Idempotent removal of rim overlay:
-          - Finds overlay node by name.
-          - Removes it safely from the scene.
-          - Does nothing if overlay does not exist.
-        """
-        if not modelNode:
-            return
-
-        baseName = modelNode.GetName() or "Anatomy"
-        overlayName = f"{baseName}{overlaySuffix}"
-
-        overlay = slicer.util.getFirstNodeByName(overlayName)
-        if overlay and overlay.IsA("vtkMRMLModelNode"):
-            try:
-                slicer.mrmlScene.RemoveNode(overlay)
-            except Exception:
-                pass
-
-    def _resetRimMaterial(self, modelNode):
-        """
-        Restore default Slicer material for a modelNode.
-        Removes rim-glow material settings.
-        """
-        if not modelNode:
-            return
-
-        dn = modelNode.GetDisplayNode()
-        if not dn:
-            try:
-                modelNode.CreateDefaultDisplayNodes()
-                dn = modelNode.GetDisplayNode()
-            except Exception:
-                return
-
-        try:
-            # Restore default Slicer lighting
-            dn.SetLighting(True)
-            dn.SetShading(True)
-
-            # Default-ish Slicer material values
-            dn.SetAmbient(0.1)
-            dn.SetDiffuse(0.9)
-            dn.SetSpecular(0.1)
-            dn.SetPower(10.0)
-
-            dn.SetBackfaceCulling(False)
-            dn.SetEdgeVisibility(False)
-
-            # Remove rim tag
-            if hasattr(dn, "SetAttribute"):
-                dn.SetAttribute("EPCMR.RimGlowApplied", "false")
-
-        except Exception:
-            pass
-
     def resetRimGlowOnAllAnatomy(self):
         """
         Reverse of boostRimGlowOnAllAnatomy:
@@ -1028,95 +633,7 @@ class SceneManager:
           - Clears rim-glow tag.
           - Uses ANATOMY_MAP as source of truth.
         """
-        import logging
-        import re
-
-        logger = getattr(self, "logger", logging)
-
-        anatomy_map = getattr(self, "ANATOMY_MAP", {})
-        token_map = {}
-
-        # Build canonical -> alias list mapping
-        try:
-            if isinstance(anatomy_map, dict):
-                for canonical, entry in anatomy_map.items():
-                    aliases = []
-                    if isinstance(entry, dict):
-                        aliases = [str(k).strip().lower() for k in entry.get("keywords", []) if k]
-                    else:
-                        if isinstance(entry, (list, tuple, set)):
-                            aliases = [str(x).strip().lower() for x in entry if x]
-                        else:
-                            aliases = [str(entry).strip().lower()]
-                    if canonical:
-                        aliases.insert(0, str(canonical).strip().lower())
-                    seen = set()
-                    aliases = [a for a in aliases if a and not (a in seen or seen.add(a))]
-                    token_map[str(canonical)] = {"aliases": aliases}
-            else:
-                token_map = {}
-        except Exception:
-            token_map = {}
-
-        def _tokenize_name(name):
-            if not name:
-                return []
-            s = re.sub(r"[^a-z0-9]+", " ", name.lower())
-            return [t for t in s.split() if t]
-
-        # Collect model nodes
-        try:
-            model_nodes = list(slicer.util.getNodesByClass("vtkMRMLModelNode"))
-        except Exception:
-            model_nodes = []
-
-        affected = []
-
-        for node in model_nodes:
-            try:
-                name = (node.GetName() or "").strip()
-            except Exception:
-                continue
-            if not name:
-                continue
-
-            lname = name.lower()
-            tokens = _tokenize_name(name)
-
-            matched = False
-            for canonical, meta in token_map.items():
-                aliases = meta.get("aliases", [])
-                for alias in aliases:
-                    if alias in tokens or alias in lname:
-                        matched = True
-                        break
-                if matched:
-                    break
-
-            if not matched:
-                continue
-
-            # Remove rim overlay
-            try:
-                self._removeRimOverlay(node)
-            except Exception:
-                pass
-
-            # Reset material
-            try:
-                self._resetRimMaterial(node)
-            except Exception:
-                pass
-
-            affected.append(name)
-            logger.info("resetRimGlowOnAllAnatomy: restored %s", name)
-
-        try:
-            slicer.util.forceRenderAllViews()
-        except Exception:
-            pass
-
-        return affected
+        return self.materialManager.resetRimGlowOnAllAnatomy()
 
     def restoreAllAnatomyAppearance(self):
         """
@@ -1127,29 +644,7 @@ class SceneManager:
           - Restores default lighting via lightsManager.
           - Normalizes anatomy appearance.
         """
-        try:
-            affected = self.resetRimGlowOnAllAnatomy()
-        except Exception:
-            affected = []
-
-        # Restore EPCMR lighting rig
-        try:
-            self.lightsManager.resetLighting()
-        except Exception:
-            pass
-
-        # Normalize anatomy appearance
-        try:
-            self.normalizeAllAnatomyAppearance()
-        except Exception:
-            pass
-
-        try:
-            slicer.util.forceRenderAllViews()
-        except Exception:
-            pass
-
-        return affected
+        return self.materialManager.restoreAllAnatomyAppearance()
 
     # ------------------------------------------------------------------
     # Voltage mapping on RA clone
@@ -1183,8 +678,6 @@ class SceneManager:
         dn.SetLighting(True)
         dn.SetShading(True)
         dn.SetBackfaceCulling(False)
-
-        from .SceneManager import is_vtk_at_least  # or import at top if same file
 
         if is_vtk_at_least(9, 3):
             try:
@@ -1514,6 +1007,7 @@ class SceneManager:
         polyData.ShallowCopy(normals.GetOutput())
         polyData.Modified()
         raCloneNode.Modified()
+        # Rim shader hook remains here; MaterialManager owns rim glow itself
         self._ensureCARTORimShader(dn)
 
     # ------------------------------------------------------------------

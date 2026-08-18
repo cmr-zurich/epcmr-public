@@ -13,6 +13,63 @@ import ctk
 import slicer
 from slicer.ScriptedLoadableModule import *
 
+# ---------------------------------------------------------------------------
+# EPCMRLib Architecture Overview
+#
+# Core Managers:
+#
+#   SceneManager
+#     - High-level coordinator for the EPCMR workflow.
+#     - Owns ANATOMY_MAP, scalar bars, markups observers, backups,
+#       RA/voltage mapping pipelines, and lighting orchestration.
+#     - Decides which nodes require rim glow, overlays, normalization,
+#       or resets.
+#     - Delegates all material operations to MaterialManager.
+#     - Delegates all lighting operations to LightsManager.
+#
+#   MaterialManager
+#     - Executes rim glow presets, rim overlays, and material resets.
+#     - Provides deterministic, idempotent material operations.
+#     - Never decides which nodes to modify; SceneManager instructs it.
+#     - Ensures SceneManager does not accumulate rendering or material logic.
+#
+#   LightsManager
+#     - Owns all EPCMR lighting rigs.
+#     - Provides deterministic setup and teardown of lights in all 3D views.
+#     - Ensures consistent illumination for anatomy, catheters, overlays,
+#       and scalar bars.
+#     - Prevents accumulation of lights across reloads or scene resets.
+#
+# Geometry and Mapping Components:
+#
+#   GeometryInterpolator
+#     - Computes spatial interpolation for activation and voltage maps.
+#     - Produces the RA clone geometry used for mapping.
+#
+#   ModelObserver
+#     - Facade that coordinates GeometryInterpolator, ColorMapper,
+#       and clone updates.
+#     - Ensures mapping pipelines remain synchronized with scene changes.
+#
+#   ColorMapper
+#     - Owns activation and voltage color transfer functions.
+#     - Provides lookup tables for scalar bars and RA clone shading.
+#
+# Architectural Principles:
+#   - SceneManager is the coordinator.
+#   - MaterialManager handles materials and rim glow.
+#   - LightsManager handles illumination.
+#   - GeometryInterpolator handles spatial interpolation.
+#   - ModelObserver synchronizes geometry and color mapping.
+#   - ColorMapper owns color transfer functions.
+#
+# Result:
+#   - Clear separation of concerns.
+#   - Deterministic rendering and mapping behavior.
+#   - Maintainable, testable, and extensible EPCMRLib architecture.
+# ---------------------------------------------------------------------------
+
+
 # ---- 2. Path Injection (MUST BE FIRST) ----
 # Excellent path injection code: This script automatically handles its own
 # subfolder structure by dynamically locating the current directory. It appends

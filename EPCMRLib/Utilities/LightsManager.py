@@ -5,6 +5,34 @@ import logging
 import slicer
 import vtk
 
+# ---------------------------------------------------------------------------
+# EPCMR Architecture: LightsManager
+#
+# Role:
+#   - Owns all lighting rigs used by EPCMR.
+#   - Provides deterministic setup and teardown of lights in all 3D views.
+#   - Ensures consistent illumination for anatomy, catheters, overlays,
+#     and scalar bars.
+#   - Prevents accumulation of lights across reloads or scene resets.
+#
+# Relationship to SceneManager:
+#   - SceneManager orchestrates when lighting should be applied or reset.
+#   - LightsManager performs the actual VTK lighting operations.
+#   - SceneManager never manipulates raw VTK light objects directly.
+#
+# Relationship to MaterialManager:
+#   - MaterialManager handles shading and material properties.
+#   - LightsManager handles illumination and light sources.
+#   - Both managers are independent but complementary.
+#
+# Result:
+#   - Clear separation of concerns:
+#       SceneManager = coordinator
+#       MaterialManager = materials and rim glow
+#       LightsManager = lighting rig
+#   - Predictable rendering behavior and easier maintenance.
+# ---------------------------------------------------------------------------
+
 
 class LightsManager:
     """
