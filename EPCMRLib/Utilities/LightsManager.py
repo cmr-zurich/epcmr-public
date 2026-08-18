@@ -2,8 +2,8 @@
 
 import logging
 
-import vtk
 import slicer
+import vtk
 
 
 class LightsManager:

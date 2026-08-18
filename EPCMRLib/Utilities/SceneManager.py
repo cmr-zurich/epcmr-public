@@ -61,6 +61,12 @@ class SceneManager:
         self.lightsManager = LightsManager()
 
         # ---------------------------------------------------------
+        # Manage Rim Shading/Glow
+        # ---------------------------------------------------------
+
+        self.rimGlowEnabled = False
+
+        # ---------------------------------------------------------
         # Sascha's Rainbow procedural color node (singleton)
         # ---------------------------------------------------------
         self.ctf = self.get_ctf()
@@ -126,21 +132,25 @@ class SceneManager:
         self.ANATOMY_MAP = {
             # NOTE: CARTO-style bluish neutral like 'NEUTRAL_CLONE_COLOR'/'RA_COLOR'
             "RA": {
-                "keywords": ["rightatrium"],
+                # MUST match both "rightatrium" and "rightatriumcardiac"
+                "keywords": ["rightatrium", "rightatriumcardiac"],
                 "color": (102 / 255, 115 / 255, 140 / 255),
                 "attr": "raModel",
             },
             "RV": {
-                "keywords": ["rightventricle"],
+                # MUST match both "rightventricle" and "rightventriclecardiac"
+                "keywords": ["rightventricle", "rightventriclecardiac"],
                 "color": (205 / 255, 20 / 255, 120 / 255),
                 "attr": "rvModel",
             },
             "SVC": {
+                # "svc" already matches "svc bj 78465309"
                 "keywords": ["svc", "superior vena"],
                 "color": (140 / 255, 110 / 255, 20 / 255),
                 "attr": None,
             },
             "IVC": {
+                # "ivc" already matches "ivc bj 78465309"
                 "keywords": ["ivc", "inferior vena"],
                 "color": (200 / 255, 190 / 255, 160 / 255),
                 "attr": None,
@@ -158,6 +168,66 @@ class SceneManager:
         # Backup + restore-safety flags
         self.suppressBackup = False
         self.isRestoringBackup = False
+
+    # ------------------------------------------------------------------
+    # Rim Shading/Glow
+    # ------------------------------------------------------------------
+
+    # Strong Preset
+    def boostRimGlow(self, modelNode):
+        dn = modelNode.GetDisplayNode()
+        if not dn:
+            return
+
+        dn.SetBackfaceCulling(False)
+        dn.SetAmbient(0.25)
+        dn.SetDiffuse(0.95)
+        dn.SetSpecular(0.35)
+        dn.SetPower(30)
+        dn.SetOpacity(0.75)
+
+    # Reset preset (neutral Slicer defaults)
+    def resetRimGlow(self, modelNode):
+        dn = modelNode.GetDisplayNode()
+        if not dn:
+            return
+
+        dn.SetBackfaceCulling(False)
+        dn.SetAmbient(0.10)
+        dn.SetDiffuse(0.90)
+        dn.SetSpecular(0.10)
+        dn.SetPower(10)
+        # Do NOT touch opacity here — leave anatomy opacity unchanged
+
+    def applyRimGlowToAnatomy(self):
+        keywords = []
+        for entry in self.ANATOMY_MAP.values():
+            keywords.extend([k.lower() for k in entry["keywords"]])
+
+        for node in slicer.util.getNodesByClass("vtkMRMLModelNode"):
+            name = node.GetName().lower()
+            if any(k in name for k in keywords):
+                self.boostRimGlow(node)
+
+    def resetRimGlowOnAnatomy(self):
+        keywords = []
+        for entry in self.ANATOMY_MAP.values():
+            keywords.extend([k.lower() for k in entry["keywords"]])
+
+        for node in slicer.util.getNodesByClass("vtkMRMLModelNode"):
+            name = node.GetName().lower()
+            if any(k in name for k in keywords):
+                self.resetRimGlow(node)
+
+    def toggleRimGlow(self):
+        if self.rimGlowEnabled:
+            self.resetRimGlowOnAnatomy()
+            self.rimGlowEnabled = False
+            print("EPCMR: Rim glow disabled.")
+        else:
+            self.applyRimGlowToAnatomy()
+            self.rimGlowEnabled = True
+            print("EPCMR: Rim glow enabled.")
 
     # ------------------------------------------------------------------
     # Catheter appearance
@@ -433,6 +503,8 @@ class SceneManager:
 
                 if hasattr(self, "normalizeAnatomyAppearance"):
                     self.normalizeAnatomyAppearance(modelNode)
+                if getattr(self, "rimGlowEnabled", False):
+                    self.boostRimGlow(modelNode)
 
                 return True
 
@@ -452,29 +524,22 @@ class SceneManager:
             return
 
         # --- FIX: PROTECT DYNAMIC CARTO-STYLE SCALAR MAPS ---
-        # If the display node contains an active scalar array name (like active LAT or voltage fields),
-        # force scalar visibility to True to prevent the map from collapsing to a single fallback color.
         if dn.GetActiveScalarName():
             dn.SetScalarVisibility(True)
         else:
             dn.SetScalarVisibility(False)
 
-        # Render BOTH front-facing and back-facing polygons.
-        # This preserves the full anatomical shell and prevents holes or missing surfaces
-        # when viewing translucent geometry from oblique angles.
         dn.SetBackfaceCulling(False)
 
-        # EXACT MATERIAL TRAITS: Extracted directly from your validated layout setup
-        dn.SetAmbient(0.45)  # High baseline glow color saturation
-        dn.SetDiffuse(0.85)  # Strong directional shadow tracking
-        dn.SetSpecular(0.10)  # Soft plastic/glass surface sheen
-        dn.SetPower(10)  # Tight reflection highlight spot-scaling
-        dn.SetOpacity(0.60)  # Translucent shell layering value
+        dn.SetAmbient(0.45)
+        dn.SetDiffuse(0.85)
+        dn.SetSpecular(0.10)
+        dn.SetPower(10)
+        dn.SetOpacity(0.60)
 
         dn.SetLighting(True)
         dn.SetShading(True)
 
-        # Smooth out polygons smoothly across the edge normals
         try:
             if hasattr(dn, "SetInterpolationToGouraud"):
                 dn.SetInterpolationToGouraud()
@@ -487,16 +552,30 @@ class SceneManager:
 
         normals = vtk.vtkPolyDataNormals()
         normals.SetInputData(polyData)
-        normals.SplittingOff()
-        normals.ConsistencyOn()
-        normals.AutoOrientNormalsOn()
-        normals.ComputePointNormalsOn()
-        normals.ComputeCellNormalsOff()
+        normals.SetSplitting(0)
+        normals.SetConsistency(1)
+        normals.SetAutoOrientNormals(1)
+        normals.SetComputePointNormals(1)  # <-- fixed
+        normals.SetComputeCellNormals(0)
         normals.Update()
 
-        polyData.DeepCopy(normals.GetOutput())
+        polyData.ShallowCopy(normals.GetOutput())
         polyData.Modified()
         modelNode.Modified()
+
+    def normalizeAllAnatomyAppearance(self):
+        """
+        Apply normalizeAnatomyAppearance to all recognized anatomy models.
+        Recognition is based on current naming conventions; colors stay as-is.
+        """
+        scene = slicer.mrmlScene
+        for modelNode in scene.GetNodesByClass("vtkMRMLModelNode"):
+            name = modelNode.GetName() or ""
+            if "RightAtriumCardiac" in name or "RightVentricleCardiac" in name or "SVC" in name or "IVC" in name:
+                try:
+                    self.normalizeAnatomyAppearance(modelNode)
+                except Exception as e:
+                    logging.error(f"EPCMR: normalizeAnatomyAppearance failed for {name}: {e}")
 
     # ------------------------------------------------------------------
     # Voltage mapping on RA clone
@@ -546,7 +625,7 @@ class SceneManager:
         normals.AutoOrientNormalsOn()
         normals.Update()
 
-        polyData.DeepCopy(normals.GetOutput())
+        polyData.ShallowCopy(normals.GetOutput())
         polyData.Modified()
         raCloneNode.Modified()
 
@@ -612,7 +691,7 @@ class SceneManager:
             normals.ConsistencyOn()
             normals.AutoOrientNormalsOn()
             normals.Update()
-            polyData.DeepCopy(normals.GetOutput())
+            polyData.ShallowCopy(normals.GetOutput())
             polyData.Modified()
             modelNode.Modified()
 
@@ -858,7 +937,7 @@ class SceneManager:
         normals.AutoOrientNormalsOn()
         normals.Update()
 
-        polyData.DeepCopy(normals.GetOutput())
+        polyData.ShallowCopy(normals.GetOutput())
         polyData.Modified()
         raCloneNode.Modified()
         self._ensureCARTORimShader(dn)
