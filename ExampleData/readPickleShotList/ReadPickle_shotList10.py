@@ -899,6 +899,7 @@ if replayPickleFile:
 
                 print(transform_message)
                 server.send_message(transform_message)
+                # Do not flood the message queue
                 sleep(0.05)
 
     # THIS PREVENTS THE 10054 ERROR UPON RE-RUN

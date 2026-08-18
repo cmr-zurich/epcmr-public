@@ -72,7 +72,12 @@ from nested_lookup import nested_lookup
 # 3 - Diag distal
 # 4 - Diag proximal
 # ========================================================================================================================================
-chMap = (("Abl_01", "dist"), ("Abl_01", "prox"), ("Ref_01", "dist"), ("Ref_01", "prox"))  # ch0  # ch1  # ch2  # ch3
+chMap = (
+    ("Abl_01", "dist"),  # ch0
+    ("Abl_01", "prox"),  # ch1
+    ("Ref_01", "dist"),  # ch2
+    ("Ref_01", "prox"),
+)  # ch3
 
 
 # ==================================================================
@@ -95,7 +100,11 @@ coils = set([coil[1] for coil in chMap])
 # =================================================================
 # This maps the slice numbers onto (human-readable) orientations
 # =================================================================
-oriMap = ("tra", "sag", "cor")  # slice 0  # slice 1  # slice 2
+oriMap = (
+    "tra",  # slice 0
+    "sag",  # slice 1
+    "cor",
+)  # slice 2
 
 # =================================================================================================================================================================================
 # Entries from xml-configuation for Vision MR catheters (perhaps we should just parse the xml-File)
@@ -636,14 +645,12 @@ def tracking_data_to_slicer(message, images, scan_names, shotList):
             for cath in trackingShotDict.keys():
                 # Center position between the coils
                 trackingShotDict[cath]["centerPos"] = (
-                    trackingShotDict[cath]["dist"]["coilPositionXYZ"]
-                    + trackingShotDict[cath]["prox"]["coilPositionXYZ"]
+                    trackingShotDict[cath]["dist"]["coilPositionXYZ"] + trackingShotDict[cath]["prox"]["coilPositionXYZ"]
                 ) / 2
 
                 # Catheter tip direction vector
                 trackingShotDict[cath]["dirVector"] = (
-                    trackingShotDict[cath]["dist"]["coilPositionXYZ"]
-                    - trackingShotDict[cath]["prox"]["coilPositionXYZ"]
+                    trackingShotDict[cath]["dist"]["coilPositionXYZ"] - trackingShotDict[cath]["prox"]["coilPositionXYZ"]
                 )
                 # Distance between coil (=length of direction vector)
                 trackingShotDict[cath]["coilDistance"] = np.linalg.norm(trackingShotDict[cath]["dirVector"])
