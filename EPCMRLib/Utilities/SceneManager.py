@@ -571,11 +571,304 @@ class SceneManager:
         scene = slicer.mrmlScene
         for modelNode in scene.GetNodesByClass("vtkMRMLModelNode"):
             name = modelNode.GetName() or ""
-            if "RightAtriumCardiac" in name or "RightVentricleCardiac" in name or "SVC" in name or "IVC" in name:
+            if "rightatrium" in name or "rightventricle" in name or "svc" in name or "ivc" in name:
                 try:
                     self.normalizeAnatomyAppearance(modelNode)
                 except Exception as e:
                     logging.error(f"EPCMR: normalizeAnatomyAppearance failed for {name}: {e}")
+
+    def boostRimGlowOnAllAnatomy(self):
+        """
+        Apply rim-glow to anatomy models using self.ANATOMY_MAP as the source of truth.
+
+        Expected ANATOMY_MAP format (examples):
+          {
+            "RA": {"keywords": ["rightatrium", "rightatriumcardiac"], "color": (r,g,b), "attr": "raModel"},
+            "IVC": {"keywords": ["ivc","inferior vena"], "color": (r,g,b), "attr": None},
+            ...
+          }
+
+        Behavior:
+          - For each canonical key in ANATOMY_MAP, gather alias tokens from 'keywords'.
+          - Match model nodes by tokenized name or substring match against aliases.
+          - If an 'attr' is provided and self.<attr> resolves to a node or node name/ID, that node is included.
+          - Skip nodes already marked with display node attribute "EPCMR.RimGlowApplied" == "true".
+          - Call self.boostRimGlow(node, color=...) if color is provided, otherwise self.boostRimGlow(node).
+          - Return list of affected node names.
+        """
+        import logging
+        import re
+
+        logger = getattr(self, "logger", logging)
+
+        # Build canonical -> alias list mapping from ANATOMY_MAP
+        token_map = {}  # canonical_key -> dict { "aliases": [...], "color": (r,g,b) or None, "attr": attrname or None }
+        anatomy_map = getattr(self, "ANATOMY_MAP", None)
+
+        try:
+            if isinstance(anatomy_map, dict):
+                for canonical, entry in anatomy_map.items():
+                    try:
+                        aliases = []
+                        color = None
+                        attr = None
+                        if isinstance(entry, dict):
+                            aliases = [str(k).strip().lower() for k in entry.get("keywords", []) if k]
+                            color = entry.get("color", None)
+                            attr = entry.get("attr", None)
+                        else:
+                            # entry might be a simple token or list
+                            if isinstance(entry, (list, tuple, set)):
+                                aliases = [str(x).strip().lower() for x in entry if x]
+                            else:
+                                aliases = [str(entry).strip().lower()]
+                        # always include canonical key itself
+                        if canonical:
+                            aliases.insert(0, str(canonical).strip().lower())
+                        # dedupe while preserving order
+                        seen = set()
+                        aliases = [a for a in aliases if a and not (a in seen or seen.add(a))]
+                        token_map[str(canonical)] = {"aliases": aliases, "color": color, "attr": attr}
+                    except Exception:
+                        # skip malformed entry but continue
+                        logger.debug("boostRimGlowOnAllAnatomy: malformed ANATOMY_MAP entry for %s", str(canonical))
+                        continue
+            elif anatomy_map:
+                # treat as iterable of tokens
+                for entry in anatomy_map:
+                    e = str(entry).strip()
+                    if e:
+                        token_map[e] = {"aliases": [e.lower()], "color": None, "attr": None}
+            else:
+                # fallback minimal map
+                token_map = {
+                    "SVC": {"aliases": ["svc"], "color": None, "attr": None},
+                    "IVC": {"aliases": ["ivc"], "color": None, "attr": None},
+                }
+        except Exception:
+            token_map = {
+                "SVC": {"aliases": ["svc"], "color": None, "attr": None},
+                "IVC": {"aliases": ["ivc"], "color": None, "attr": None},
+            }
+
+        # Helper: normalize a model name into searchable tokens
+        def _tokenize_name(name):
+            if not name:
+                return []
+            s = re.sub(r"[^a-z0-9]+", " ", name.lower())
+            tokens = [t for t in s.split() if t]
+            return tokens
+
+        # Helper: resolve attr -> node(s)
+        def _resolve_attr_node(attrname):
+            """
+            Try to resolve an attribute name on self to a node object or node name/ID.
+            Returns a list of vtkMRMLNode objects (possibly empty).
+            """
+            resolved = []
+            if not attrname:
+                return resolved
+            try:
+                if hasattr(self, attrname):
+                    val = getattr(self, attrname)
+                    # If it's already a node
+                    try:
+                        if val and hasattr(val, "IsA") and val.IsA("vtkMRMLNode"):
+                            resolved.append(val)
+                            return resolved
+                    except Exception:
+                        pass
+                    # If it's a string, try to find node by name or id
+                    try:
+                        sval = str(val)
+                        node = slicer.util.getFirstNodeByName(sval)
+                        if node:
+                            resolved.append(node)
+                            return resolved
+                        # try by id
+                        node = slicer.mrmlScene.GetNodeByID(sval)
+                        if node:
+                            resolved.append(node)
+                            return resolved
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            return resolved
+
+        # Collect all model nodes once
+        try:
+            model_nodes = list(slicer.util.getNodesByClass("vtkMRMLModelNode"))
+        except Exception:
+            model_nodes = []
+            try:
+                it = slicer.mrmlScene.GetNodes()
+                it.InitTraversal()
+                for i in range(it.GetNumberOfItems()):
+                    n = it.GetItemAsObject(i)
+                    try:
+                        if n.IsA("vtkMRMLModelNode"):
+                            model_nodes.append(n)
+                    except Exception:
+                        continue
+            except Exception:
+                model_nodes = []
+
+        affected = []
+        applied_nodes = set()  # track node IDs to avoid duplicates
+
+        # First, include nodes referenced by attrs (explicit mapping)
+        for canonical, meta in token_map.items():
+            attrname = meta.get("attr", None)
+            if attrname:
+                try:
+                    resolved = _resolve_attr_node(attrname)
+                    for node in resolved:
+                        try:
+                            nid = node.GetID()
+                            if nid in applied_nodes:
+                                continue
+                            # ensure display node exists
+                            dn = node.GetDisplayNode()
+                            if not dn:
+                                try:
+                                    node.CreateDefaultDisplayNodes()
+                                    dn = node.GetDisplayNode()
+                                except Exception:
+                                    logger.warning(
+                                        "boostRimGlowOnAllAnatomy: could not create display node for %s", node.GetName()
+                                    )
+                                    continue
+                            # skip if already tagged
+                            try:
+                                if hasattr(dn, "GetAttribute"):
+                                    tag = dn.GetAttribute("EPCMR.RimGlowApplied")
+                                    if tag and str(tag).lower() == "true":
+                                        continue
+                            except Exception:
+                                pass
+                            # apply
+                            try:
+                                color = meta.get("color", None)
+                                if color is not None:
+                                    try:
+                                        self.boostRimGlow(node, color=color)
+                                    except TypeError:
+                                        # fallback if boostRimGlow doesn't accept color kwarg
+                                        self.boostRimGlow(node)
+                                else:
+                                    self.boostRimGlow(node)
+                                if hasattr(dn, "SetAttribute"):
+                                    dn.SetAttribute("EPCMR.RimGlowApplied", "true")
+                                affected.append(node.GetName())
+                                applied_nodes.add(nid)
+                                logger.info(
+                                    "boostRimGlowOnAllAnatomy: applied rim-glow to %s via attr %s",
+                                    node.GetName(),
+                                    attrname,
+                                )
+                            except Exception as e:
+                                logger.exception(
+                                    "boostRimGlowOnAllAnatomy: failed to apply rim-glow to %s: %s",
+                                    node.GetName(),
+                                    str(e),
+                                )
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
+
+        # Now match by keywords against model names
+        for node in model_nodes:
+            try:
+                nid = node.GetID()
+                if nid in applied_nodes:
+                    continue
+                name = (node.GetName() or "").strip()
+            except Exception:
+                continue
+            if not name:
+                continue
+            lname = name.lower()
+            name_tokens = _tokenize_name(name)
+
+            matched = False
+            matched_meta = None
+            matched_alias = None
+
+            for canonical, meta in token_map.items():
+                aliases = meta.get("aliases", []) or []
+                for alias in aliases:
+                    if not alias:
+                        continue
+                    # token equality match
+                    if alias in name_tokens:
+                        matched = True
+                        matched_meta = meta
+                        matched_alias = alias
+                        break
+                    # substring fallback
+                    if alias in lname:
+                        matched = True
+                        matched_meta = meta
+                        matched_alias = alias
+                        break
+                if matched:
+                    break
+
+            if not matched:
+                continue
+
+            # Ensure display node exists
+            dn = node.GetDisplayNode()
+            if not dn:
+                try:
+                    node.CreateDefaultDisplayNodes()
+                    dn = node.GetDisplayNode()
+                except Exception:
+                    logger.warning("boostRimGlowOnAllAnatomy: could not create display node for %s", name)
+                    continue
+
+            # Skip if already applied
+            try:
+                if hasattr(dn, "GetAttribute"):
+                    tag = dn.GetAttribute("EPCMR.RimGlowApplied")
+                    if tag and str(tag).lower() == "true":
+                        logger.debug("boostRimGlowOnAllAnatomy: skipping %s (already tagged)", name)
+                        applied_nodes.add(nid)
+                        continue
+            except Exception:
+                pass
+
+            # Apply rim glow
+            try:
+                color = matched_meta.get("color", None) if matched_meta else None
+                if color is not None:
+                    try:
+                        self.boostRimGlow(node, color=color)
+                    except TypeError:
+                        self.boostRimGlow(node)
+                else:
+                    self.boostRimGlow(node)
+                try:
+                    if hasattr(dn, "SetAttribute"):
+                        dn.SetAttribute("EPCMR.RimGlowApplied", "true")
+                except Exception:
+                    pass
+                affected.append(name)
+                applied_nodes.add(nid)
+                logger.info("boostRimGlowOnAllAnatomy: applied rim-glow to %s (matched %s)", name, matched_alias)
+            except Exception as e:
+                logger.exception("boostRimGlowOnAllAnatomy: failed to apply rim-glow to %s: %s", name, str(e))
+                continue
+
+        # Force a render so changes are visible immediately
+        try:
+            slicer.util.forceRenderAllViews()
+        except Exception:
+            pass
+
+        return affected
 
     # ------------------------------------------------------------------
     # Voltage mapping on RA clone
