@@ -97,6 +97,27 @@ class SceneManager:
         self.rimGlowEnabled = False
 
         # ---------------------------------------------------------
+        # Rim glow is now handled by MaterialManager (idempotent)
+        # SceneManager only orchestrates which nodes receive rim glow.
+        self.materialManager = MaterialManager(self)
+        self.rimGlowEnabled = False
+
+        # ---------------------------------------------------------
+        # Material defaults (centralized)
+        # ---------------------------------------------------------
+        # These defaults favor high diffuse, low ambient, modest specular,
+        # and full opacity so scene lights produce visible shading.
+        self._materialDefaults = {
+            "ambient": 0.02,
+            "diffuse": 0.95,
+            "specular": 0.03,
+            "power": 10.0,
+            "opacity": 1.0,
+            # optional multiplicative scale for runtime tuning
+            "scale": getattr(self, "_materialDefaultsScale", 1.0),
+        }
+
+        # ---------------------------------------------------------
         # Sascha's Rainbow procedural color node (singleton)
         # ---------------------------------------------------------
         self.ctf = self.get_ctf()
@@ -209,12 +230,82 @@ class SceneManager:
         if not dn:
             return
 
+        # PRIOR SETTTINGS
+        # dn.SetBackfaceCulling(False)
+        # dn.SetAmbient(0.10)
+        # dn.SetDiffuse(0.90)
+        # dn.SetSpecular(0.10)
+        # dn.SetPower(10)
+        # # Do NOT touch opacity here - leave anatomy opacity unchanged
+
         dn.SetBackfaceCulling(False)
-        dn.SetAmbient(0.10)
-        dn.SetDiffuse(0.90)
-        dn.SetSpecular(0.10)
-        dn.SetPower(10)
-        # Do NOT touch opacity here — leave anatomy opacity unchanged
+        # apply defaults but preserve opacity
+        self.applyMaterialDefaultsToNode(modelNode, preserveOpacity=True)
+
+    def applyMaterialDefaultsToNode(self, modelNode, preserveOpacity=False):
+        """
+        Apply centralized material defaults to a model's display node.
+        preserveOpacity: if True, do not override the node's existing opacity.
+        """
+        if not modelNode:
+            return
+        modelNode.CreateDefaultDisplayNodes()
+        dn = modelNode.GetDisplayNode()
+        if not dn:
+            return
+
+        defaults = dict(self._materialDefaults)  # copy
+        scale = float(defaults.get("scale", 1.0))
+
+        try:
+            ambient = float(defaults.get("ambient", 0.02))
+            diffuse = float(defaults.get("diffuse", 0.95))
+            specular = float(defaults.get("specular", 0.03))
+            power = float(defaults.get("power", 10.0))
+            opacity = float(defaults.get("opacity", 1.0))
+        except Exception:
+            # fallback safe values
+            ambient, diffuse, specular, power, opacity = 0.02, 0.95, 0.03, 10.0, 1.0
+
+        # apply scale to diffuse/specular only (keeps ambient small)
+        diffuse = max(0.0, min(1.0, diffuse * scale))
+        specular = max(0.0, min(1.0, specular * scale))
+
+        try:
+            dn.SetAmbient(ambient)
+        except Exception:
+            pass
+        try:
+            dn.SetDiffuse(diffuse)
+        except Exception:
+            pass
+        try:
+            dn.SetSpecular(specular)
+        except Exception:
+            pass
+        try:
+            dn.SetPower(power)
+        except Exception:
+            pass
+        if not preserveOpacity:
+            try:
+                dn.SetOpacity(opacity)
+            except Exception:
+                pass
+
+        # Ensure lighting/shading are enabled for anatomy by default
+        try:
+            dn.SetLighting(True)
+            dn.SetShading(True)
+        except Exception:
+            pass
+
+        # Ensure scalar visibility is off by default for anatomy unless explicitly used
+        try:
+            if not dn.GetActiveScalarName():
+                dn.SetScalarVisibility(False)
+        except Exception:
+            pass
 
     def applyRimGlowToAnatomy(self):
         keywords = []
@@ -270,21 +361,73 @@ class SceneManager:
         # === CRITICAL FIX FOR SELF-LIT EMISSIVE QUALITY ===
         # Turning ScalarVisibility OFF breaks the VTK internal hardware link that
         # forces scene light tracking. This allows the catheter to become 100% self-lit.
-        dn.SetScalarVisibility(False)
-        dn.SetLighting(False)  # Turn off scene lighting equations completely
+        try:
+            dn.SetScalarVisibility(False)
+        except Exception:
+            pass
+        try:
+            dn.SetLighting(False)  # Turn off scene lighting equations completely
+        except Exception:
+            pass
 
-        # === REAL-TIME CARTO LIGHTING: Pure Emissive Performance ===
-        dn.SetAmbient(1.00)  # 100% Self-illumination creates a brilliant, vibrant neon baseline
-        dn.SetDiffuse(0.00)  # Completely remove directional shadows (prevents dirty/muddy undersides)
-        dn.SetSpecular(0.00)  # Remove harsh reflections to keep the color purely saturated
-        dn.SetPower(1)
+        # === REAL-TIME CARTO LIGHTING: Controlled Emissive Performance ===
+        # Use a controlled emissive baseline rather than full 1.0 to avoid overexposure.
+        # Per-catheter scale allows runtime tuning without changing lights.
+        base_ambient = 0.60  # controlled emissive baseline (was 1.00)
+        base_diffuse = 0.00
+        base_specular = 0.02
+        base_power = 2.0
+
+        # Read optional per-node emissive scale attribute (string) if present
+        try:
+            attr = dn.GetAttribute("EPCMR_CatheterEmissiveScale")
+            scale = float(attr) if attr is not None else 1.0
+        except Exception:
+            scale = 1.0
+
+        # Clamp scale to a safe range
+        try:
+            scale = max(0.4, min(1.6, float(scale)))
+        except Exception:
+            scale = 1.0
+
+        emissive = max(0.0, min(1.0, base_ambient * scale))
+
+        try:
+            dn.SetAmbient(emissive)  # controlled self-illumination
+        except Exception:
+            pass
+        try:
+            dn.SetDiffuse(base_diffuse)
+        except Exception:
+            pass
+        try:
+            dn.SetSpecular(base_specular)
+        except Exception:
+            pass
+        try:
+            dn.SetPower(base_power)
+        except Exception:
+            pass
 
         # === ELECTRODE SEAMS: High-speed edge definition ===
-        dn.SetEdgeVisibility(True)
-        dn.SetEdgeColor(0.10, 0.10, 0.10)  # Sharp dark seams distinctly separate electrode bands
-        dn.SetLineWidth(1.5)  # Crisp, lightweight separation lines
+        try:
+            dn.SetEdgeVisibility(True)
+        except Exception:
+            pass
+        try:
+            dn.SetEdgeColor(0.10, 0.10, 0.10)  # Sharp dark seams distinctly separate electrode bands
+        except Exception:
+            pass
+        try:
+            dn.SetLineWidth(1.5)  # Crisp, lightweight separation lines
+        except Exception:
+            pass
 
-        dn.SetBackfaceCulling(False)
+        try:
+            dn.SetBackfaceCulling(False)
+        except Exception:
+            pass
 
         # === FIXED CARTO VISIBILITY: Force Catheters to Render Over Internal Shadows ===
         # Explicitly configure the backend graphics card mappers across all 3D viewports
@@ -306,10 +449,24 @@ class SceneManager:
                     while p:
                         if hasattr(p, "GetMapper"):
                             m = p.GetMapper()
-                            if m and m.GetInput() == modelNode.GetPolyData():
-                                m.SetLighting(False)  # Force drop lighting calculations on the GPU mapper
-                                m.SetColorModeToDirectScalars()
-                                m.ScalarVisibilityOff()  # Wipe out lighting-enforced scalar array paths
+                            try:
+                                if m and m.GetInput() == modelNode.GetPolyData():
+                                    # Force drop lighting calculations on the GPU mapper
+                                    try:
+                                        m.SetLighting(False)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        m.SetColorModeToDirectScalars()
+                                    except Exception:
+                                        pass
+                                    try:
+                                        m.ScalarVisibilityOff()
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                # Some mapper implementations may raise on GetInput comparison
+                                pass
                         p = props.GetNextProp()
         except Exception:
             pass
@@ -511,10 +668,19 @@ class SceneManager:
                 modelNode.CreateDefaultDisplayNodes()
                 dn = modelNode.GetDisplayNode()
 
+                # PRIOR SETTTINGS
+                # dn.SetScalarVisibility(False)
+                # dn.SetColor(*config["color"])
+                # dn.SetOpacity(0.6)
+                # dn.SetAmbient(0.15)
+                # dn.SetBackfaceCulling(False)
+                # dn.SetVisibility(True)
+
                 dn.SetScalarVisibility(False)
                 dn.SetColor(*config["color"])
+                # apply centralized material defaults but preserve the intended anatomy opacity
                 dn.SetOpacity(0.6)
-                dn.SetAmbient(0.15)
+                self.applyMaterialDefaultsToNode(modelNode, preserveOpacity=True)
                 dn.SetBackfaceCulling(False)
                 dn.SetVisibility(True)
 
@@ -553,11 +719,20 @@ class SceneManager:
 
         dn.SetBackfaceCulling(False)
 
-        dn.SetAmbient(0.45)
-        dn.SetDiffuse(0.85)
-        dn.SetSpecular(0.10)
-        dn.SetPower(10)
-        dn.SetOpacity(0.60)
+        # PRIOR SETTINGS
+        # dn.SetAmbient(0.45)
+        # dn.SetDiffuse(0.85)
+        # dn.SetSpecular(0.10)
+        # dn.SetPower(10)
+        # dn.SetOpacity(0.60)
+
+        # Apply centralized defaults and then set any anatomy-specific overrides
+        self.applyMaterialDefaultsToNode(modelNode, preserveOpacity=False)
+        # keep the normalized anatomy opacity target
+        try:
+            dn.SetOpacity(0.60)
+        except Exception:
+            pass
 
         dn.SetLighting(True)
         dn.SetShading(True)
@@ -1478,6 +1653,7 @@ class SceneManager:
         # Run a non-destructive renderer repair once per SceneManager instance.
         # This prevents attempting to remove or reconfigure lights when the
         # renderer is in a corrupted GL state (common after sandbox/module reloads).
+
         # Ensure renderer is healthy before scene reset/setup (deferred if needed)
         try:
             from EPCMRLib.Utilities.RendererRepairManager import RendererRepairManager
@@ -1517,9 +1693,18 @@ class SceneManager:
                     dn = node.GetDisplayNode()
                     if dn:
                         # Reset display parameters closer to standard default baselines
-                        dn.SetAmbient(0.1)
-                        dn.SetDiffuse(0.9)
-                        dn.SetSpecular(0.2)
+                        try:
+                            dn.SetAmbient(0.1)
+                        except Exception:
+                            pass
+                        try:
+                            dn.SetDiffuse(0.9)
+                        except Exception:
+                            pass
+                        try:
+                            dn.SetSpecular(0.2)
+                        except Exception:
+                            pass
 
                     # Look up mapper to re-enable lighting so standard shaders apply
                     lm = slicer.app.layoutManager()
@@ -1536,17 +1721,21 @@ class SceneManager:
                                     while p:
                                         if hasattr(p, "GetMapper"):
                                             m = p.GetMapper()
-                                            if m and m.GetInput() == node.GetPolyData():
-                                                # Restore default VTK cell-shading pipelines
-                                                try:
-                                                    m.SetLighting(True)
-                                                except Exception:
-                                                    pass
-                                                try:
-                                                    m.ScalarVisibilityOn()
-                                                except Exception:
-                                                    pass
-                                                break
+                                            try:
+                                                if m and m.GetInput() == node.GetPolyData():
+                                                    # Restore default VTK cell-shading pipelines
+                                                    try:
+                                                        m.SetLighting(True)
+                                                    except Exception:
+                                                        pass
+                                                    try:
+                                                        m.ScalarVisibilityOn()
+                                                    except Exception:
+                                                        pass
+                                                    break
+                                            except Exception:
+                                                # Some mapper implementations may raise on GetInput comparison
+                                                pass
                                         p = props.GetNextProp()
         except Exception:
             # Reverting material pipelines must never stall cleanup
@@ -1649,7 +1838,85 @@ class SceneManager:
             pass
 
         # --------------------------------------------------------------
-        # 6) Final render pass to ensure scene is consistent after cleanup
+        # 6) Re-apply material defaults to visible anatomy to ensure consistent lighting after cleanup
+        # --------------------------------------------------------------
+        try:
+            # If SceneManager provides a centralized helper, use it; otherwise apply safe defaults inline.
+            for node in slicer.util.getNodesByClass("vtkMRMLModelNode"):
+                try:
+                    name = (node.GetName() or "").lower()
+                except Exception:
+                    name = ""
+                # Only re-apply to recognized anatomy nodes to avoid touching unrelated models
+                try:
+                    anatomy_keywords = []
+                    for entry in getattr(self, "ANATOMY_MAP", {}).values():
+                        anatomy_keywords.extend([k.lower() for k in entry.get("keywords", [])])
+                except Exception:
+                    anatomy_keywords = []
+
+                if any(k in name for k in anatomy_keywords):
+                    try:
+                        # Prefer SceneManager helper if available
+                        if hasattr(self, "applyMaterialDefaultsToNode"):
+                            try:
+                                # preserve existing opacity where anatomy intentionally set it
+                                self.applyMaterialDefaultsToNode(node, preserveOpacity=True)
+                            except Exception:
+                                # fallback to inline defaults if helper fails
+                                dn = node.GetDisplayNode()
+                                if dn:
+                                    try:
+                                        dn.SetAmbient(0.02)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        dn.SetDiffuse(0.95)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        dn.SetSpecular(0.03)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        dn.SetPower(10.0)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        dn.SetScalarVisibility(0)
+                                    except Exception:
+                                        pass
+                        else:
+                            dn = node.GetDisplayNode()
+                            if dn:
+                                try:
+                                    dn.SetAmbient(0.02)
+                                except Exception:
+                                    pass
+                                try:
+                                    dn.SetDiffuse(0.95)
+                                except Exception:
+                                    pass
+                                try:
+                                    dn.SetSpecular(0.03)
+                                except Exception:
+                                    pass
+                                try:
+                                    dn.SetPower(10.0)
+                                except Exception:
+                                    pass
+                                try:
+                                    dn.SetScalarVisibility(0)
+                                except Exception:
+                                    pass
+                    except Exception:
+                        # Per-node material application must not break cleanup
+                        pass
+        except Exception:
+            pass
+
+        # --------------------------------------------------------------
+        # 7) Final render pass to ensure scene is consistent after cleanup
         # --------------------------------------------------------------
         try:
             slicer.util.forceRenderAllViews()

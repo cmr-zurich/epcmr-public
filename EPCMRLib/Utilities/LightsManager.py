@@ -73,43 +73,32 @@ class LightsManager:
         # sandbox/module reloads). The guard keeps this idempotent per instance.
         try:
             if not getattr(self, "_rendererRepairAttempted", False):
-                try:
-                    # Defer repair if the layoutManager is not yet available to avoid
-                    # "no layoutManager available" messages during early startup.
-                    from PyQt5 import QtCore
+                from PyQt5 import QtCore
 
-                    from EPCMRLib.Utilities.RendererRepairManager import RendererRepairManager
+                def _lightsmanager_repair():
+                    try:
+                        from EPCMRLib.Utilities.RendererRepairManager import RendererRepairManager
 
-                    def _do_repair():
                         try:
                             RendererRepairManager().repairAllRenderers()
                         except Exception:
                             pass
-                        # mark attempted even if repair failed to avoid repeated attempts
-                        self._rendererRepairAttempted = True
-
-                    try:
-                        if slicer.app.layoutManager():
-                            # layoutManager available now — run immediately
-                            _do_repair()
-                        else:
-                            # schedule shortly after event loop starts
-                            QtCore.QTimer.singleShot(250, _do_repair)
-                    except Exception:
-                        # fallback: best-effort immediate call
-                        try:
-                            RendererRepairManager().repairAllRenderers()
-                        except Exception:
-                            pass
-                        self._rendererRepairAttempted = True
-
-                except Exception:
-                    # Import or repair failure must not stop lighting setup
-                    try:
-                        # As a final fallback, mark attempted so we don't retry repeatedly
-                        self._rendererRepairAttempted = True
                     except Exception:
                         pass
+                    self._rendererRepairAttempted = True
+
+                # If layoutManager exists now, run immediately; otherwise defer slightly.
+                try:
+                    if slicer.app.layoutManager():
+                        _lightsmanager_repair()
+                    else:
+                        QtCore.QTimer.singleShot(250, _lightsmanager_repair)
+                except Exception:
+                    # Fallback: attempt immediate repair but never raise
+                    try:
+                        _lightsmanager_repair()
+                    except Exception:
+                        self._rendererRepairAttempted = True
         except Exception:
             # Defensive: any attribute errors should not break setupLighting
             pass
@@ -209,9 +198,14 @@ class LightsManager:
                 rim.SetPosition(-140, -310, 210)
                 rim.SetFocalPoint(0, 0, 0)
                 rim.SetColor(0.60, 0.70, 1.00)
-                rim.SetIntensity(0.28)
+                # safer default to preserve contrast
+                rim.SetIntensity(0.45)
                 renderer.AddLight(rim)
                 viewLights.append(rim)
+                try:
+                    rim.SetAttribute("EPCMR_LightRole", "rim")
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -222,9 +216,14 @@ class LightsManager:
                 fill.SetPosition(0, 300, 120)
                 fill.SetFocalPoint(0, 0, 0)
                 fill.SetColor(1.00, 0.85, 0.70)
-                fill.SetIntensity(0.22)
+                # moderate fill to add mid-tone illumination
+                fill.SetIntensity(0.55)
                 renderer.AddLight(fill)
                 viewLights.append(fill)
+                try:
+                    fill.SetAttribute("EPCMR_LightRole", "fill")
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -235,9 +234,14 @@ class LightsManager:
                 catFront.SetPosition(120, -80, 180)
                 catFront.SetFocalPoint(0, 0, 0)
                 catFront.SetColor(1.00, 1.00, 1.00)
-                catFront.SetIntensity(0.85)
+                # slightly reduced from previous extreme to avoid flattening
+                catFront.SetIntensity(1.2)
                 renderer.AddLight(catFront)
                 viewLights.append(catFront)
+                try:
+                    catFront.SetAttribute("EPCMR_LightRole", "catFront")
+                except Exception:
+                    pass
             except Exception:
                 catFront = None
 
@@ -247,9 +251,13 @@ class LightsManager:
                 catRear.SetPosition(-120, 80, -160)
                 catRear.SetFocalPoint(0, 0, 0)
                 catRear.SetColor(1.00, 1.00, 1.00)
-                catRear.SetIntensity(0.65)
+                catRear.SetIntensity(0.9)
                 renderer.AddLight(catRear)
                 viewLights.append(catRear)
+                try:
+                    catRear.SetAttribute("EPCMR_LightRole", "catRear")
+                except Exception:
+                    pass
             except Exception:
                 catRear = None
 
@@ -259,9 +267,13 @@ class LightsManager:
                 catTop.SetPosition(0, 0, 260)
                 catTop.SetFocalPoint(0, 0, 0)
                 catTop.SetColor(1.00, 1.00, 1.00)
-                catTop.SetIntensity(0.55)
+                catTop.SetIntensity(0.8)
                 renderer.AddLight(catTop)
                 viewLights.append(catTop)
+                try:
+                    catTop.SetAttribute("EPCMR_LightRole", "catTop")
+                except Exception:
+                    pass
             except Exception:
                 catTop = None
 
@@ -281,9 +293,14 @@ class LightsManager:
                 ambient.SetPosition(0, 0, 0)
                 ambient.SetFocalPoint(0, 0, 0)
                 ambient.SetColor(0.95, 0.95, 1.00)
-                ambient.SetIntensity(0.75)
+                # reduced ambient to avoid flattening contrast
+                ambient.SetIntensity(0.6)
                 renderer.AddLight(ambient)
                 viewLights.append(ambient)
+                try:
+                    ambient.SetAttribute("EPCMR_LightRole", "ambient")
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -294,9 +311,14 @@ class LightsManager:
                 under.SetPosition(0, -400, -200)
                 under.SetFocalPoint(0, 0, 0)
                 under.SetColor(0.85, 0.90, 1.00)
-                under.SetIntensity(0.75)
+                # intentionally weak under-light to avoid backlight wash
+                under.SetIntensity(0.35)
                 renderer.AddLight(under)
                 viewLights.append(under)
+                try:
+                    under.SetAttribute("EPCMR_LightRole", "under")
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -307,7 +329,8 @@ class LightsManager:
                 noShadow.SetPosition(0, 0, 0)
                 noShadow.SetFocalPoint(0, 0, 0)
                 noShadow.SetColor(1.0, 1.0, 1.0)
-                noShadow.SetIntensity(0.55)
+                # clamp no-shadow to a conservative value
+                noShadow.SetIntensity(0.45)
                 # Use ambient/diffuse/specular color setters if available
                 try:
                     noShadow.SetAmbientColor(1.0, 1.0, 1.0)
@@ -323,6 +346,79 @@ class LightsManager:
                     pass
                 renderer.AddLight(noShadow)
                 viewLights.append(noShadow)
+                try:
+                    noShadow.SetAttribute("EPCMR_LightRole", "noShadow")
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+            # apply global scale to the lights we just created
+            try:
+                self._globalLightScale = getattr(self, "_globalLightScale", 1.0)
+                scale = float(self._globalLightScale)
+                if scale != 1.0:
+                    for l in viewLights:
+                        try:
+                            try:
+                                current = l.GetIntensity()
+                                l.SetIntensity(max(0.0, current * scale))
+                            except Exception:
+                                l.SetIntensity(1.0 * scale)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+            # deterministic clamp: ensure under/noShadow/central lights cannot flatten contrast
+            try:
+                try:
+                    ren = view.renderWindow().GetRenderers().GetFirstRenderer()
+                except Exception:
+                    ren = None
+                if ren:
+                    lightsClamp = ren.GetLights()
+                    lightsClamp.InitTraversal()
+                    lClamp = lightsClamp.GetNextItem()
+                    while lClamp:
+                        try:
+                            role = None
+                            try:
+                                role = lClamp.GetAttribute("EPCMR_LightRole")
+                            except Exception:
+                                pass
+                            # clamp by explicit role
+                            if role == "under":
+                                try:
+                                    lClamp.SetIntensity(min(lClamp.GetIntensity(), 0.35))
+                                except Exception:
+                                    pass
+                            elif role == "noShadow":
+                                try:
+                                    lClamp.SetIntensity(min(lClamp.GetIntensity(), 0.45))
+                                except Exception:
+                                    pass
+                            elif role == "ambient":
+                                try:
+                                    lClamp.SetIntensity(min(lClamp.GetIntensity(), 0.6))
+                                except Exception:
+                                    pass
+                            elif role == "catTop":
+                                try:
+                                    lClamp.SetIntensity(min(lClamp.GetIntensity(), 0.8))
+                                except Exception:
+                                    pass
+                            else:
+                                # fallback heuristic: clamp lights at or near origin or high Z
+                                try:
+                                    pos = lClamp.GetPosition()
+                                    if pos and (pos == (0.0, 0.0, 0.0) or pos == (0.0, 0.0, 260.0)):
+                                        lClamp.SetIntensity(min(lClamp.GetIntensity(), 0.85))
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                        lClamp = lightsClamp.GetNextItem()
             except Exception:
                 pass
 
@@ -374,6 +470,39 @@ class LightsManager:
                         view.forceRender()
                     except Exception:
                         pass
+
+        # Slight renderer ambient to ensure diffuse surfaces remain visible, but clamp to avoid flattening
+        try:
+            ren = (
+                slicer.app.layoutManager().threeDWidget(0).threeDView().renderWindow().GetRenderers().GetFirstRenderer()
+            )
+            try:
+                # clamp ambient to a moderate value
+                currentAmbient = None
+                try:
+                    currentAmbient = ren.GetAmbient()
+                except Exception:
+                    pass
+                # prefer explicit set to a safe default if GetAmbient is unavailable
+                try:
+                    if currentAmbient and isinstance(currentAmbient, tuple):
+                        # clamp each channel
+                        r = min(currentAmbient[0], 0.25)
+                        g = min(currentAmbient[1], 0.25)
+                        b = min(currentAmbient[2], 0.25)
+                        ren.SetAmbient(r, g, b)
+                    else:
+                        ren.SetAmbient(0.20, 0.20, 0.20)
+                except Exception:
+                    # final fallback
+                    try:
+                        ren.SetAmbient(0.20, 0.20, 0.20)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        except Exception:
+            pass
 
         self._lightingInstalled = True
 

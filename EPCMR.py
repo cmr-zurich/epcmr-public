@@ -1530,7 +1530,6 @@ class EPCMR(ScriptedLoadableModule):
                     slicer.app._EPCMR_renderer_repair_done = True
 
                 # Run shortly after the event loop starts so layoutManager is available.
-                # 250 ms is conservative; reduce if you prefer faster startup.
                 try:
                     QtCore.QTimer.singleShot(250, _deferred_renderer_repair)
                 except Exception:
