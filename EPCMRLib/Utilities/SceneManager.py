@@ -577,8 +577,8 @@ class SceneManager:
         normals.SetSplitting(0)
         normals.SetConsistency(1)
         normals.SetAutoOrientNormals(1)
-        normals.SetComputePointNormal(1)  # <-- fixed
-        normals.SetComputeCellNormal(0)
+        normals.SetComputePointNormals(1)  # <-- fixed
+        normals.SetComputeCellNormals(0)
         normals.Update()
 
         polyData.ShallowCopy(normals.GetOutput())
@@ -1473,6 +1473,39 @@ class SceneManager:
           - Catheter mappers and display properties are reverted to baseline.
         """
         # --------------------------------------------------------------
+        # PRELUDE: Ensure renderer GL/lighting state is healthy before teardown
+        # --------------------------------------------------------------
+        # Run a non-destructive renderer repair once per SceneManager instance.
+        # This prevents attempting to remove or reconfigure lights when the
+        # renderer is in a corrupted GL state (common after sandbox/module reloads).
+        # Ensure renderer is healthy before scene reset/setup (deferred if needed)
+        try:
+            from EPCMRLib.Utilities.RendererRepairManager import RendererRepairManager
+            from PyQt5 import QtCore
+
+            def _run_or_defer_repair():
+                lm = slicer.app.layoutManager()
+                if lm:
+                    try:
+                        RendererRepairManager().repairAllRenderers()
+                    except Exception:
+                        pass
+                else:
+                    # layoutManager not ready yet; schedule a short deferred attempt
+                    try:
+                        QtCore.QTimer.singleShot(250, lambda: RendererRepairManager().repairAllRenderers())
+                    except Exception:
+                        # final fallback: best-effort immediate call
+                        try:
+                            RendererRepairManager().repairAllRenderers()
+                        except Exception:
+                            pass
+
+            _run_or_defer_repair()
+        except Exception:
+            pass
+
+        # --------------------------------------------------------------
         # 0) Revert catheter material properties and mapper lighting
         #    Ensures code parameter modifications are applied cleanly on module reloads.
         # --------------------------------------------------------------
@@ -1505,8 +1538,14 @@ class SceneManager:
                                             m = p.GetMapper()
                                             if m and m.GetInput() == node.GetPolyData():
                                                 # Restore default VTK cell-shading pipelines
-                                                m.SetLighting(True)
-                                                m.ScalarVisibilityOn()
+                                                try:
+                                                    m.SetLighting(True)
+                                                except Exception:
+                                                    pass
+                                                try:
+                                                    m.ScalarVisibilityOn()
+                                                except Exception:
+                                                    pass
                                                 break
                                         p = props.GetNextProp()
         except Exception:
@@ -1566,7 +1605,27 @@ class SceneManager:
         try:
             # Delegate to LightsManager if available; ensures deterministic teardown
             if hasattr(self, "lightsManager") and self.lightsManager:
-                self.lightsManager.cleanup()
+                try:
+                    # Attempt a lightweight renderer repair immediately before lights cleanup
+                    # to avoid removing lights from a corrupted renderer state.
+                    if not getattr(self, "_lightsCleanupRepairAttempted", False):
+                        try:
+                            from EPCMRLib.Utilities.RendererRepairManager import RendererRepairManager
+
+                            try:
+                                RendererRepairManager().repairAllRenderers()
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                        self._lightsCleanupRepairAttempted = True
+                except Exception:
+                    pass
+                try:
+                    self.lightsManager.cleanup()
+                except Exception:
+                    # Lighting cleanup must never break teardown
+                    pass
         except Exception:
             # Lighting cleanup must never break teardown
             pass
@@ -1587,4 +1646,12 @@ class SceneManager:
                         pass
         except Exception:
             # Node teardown must never crash the main cleanup stack
+            pass
+
+        # --------------------------------------------------------------
+        # 6) Final render pass to ensure scene is consistent after cleanup
+        # --------------------------------------------------------------
+        try:
+            slicer.util.forceRenderAllViews()
+        except Exception:
             pass

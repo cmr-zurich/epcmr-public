@@ -1511,6 +1511,40 @@ class EPCMR(ScriptedLoadableModule):
         if not slicer.app.commandOptions().noMainWindow:
             slicer.app.connect("startupCompleted()", self.registerModuleToolBarButton)
 
+        # Module startup: call once per process to repair renderer state (deferred)
+        try:
+            if not getattr(slicer.app, "_EPCMR_renderer_repair_done", False):
+                from PyQt5 import QtCore
+
+                def _deferred_renderer_repair():
+                    try:
+                        from EPCMRLib.Utilities.RendererRepairManager import RendererRepairManager
+
+                        try:
+                            RendererRepairManager().repairAllRenderers()
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+                    # mark as done even if repair failed to avoid repeated attempts
+                    slicer.app._EPCMR_renderer_repair_done = True
+
+                # Run shortly after the event loop starts so layoutManager is available.
+                # 250 ms is conservative; reduce if you prefer faster startup.
+                try:
+                    QtCore.QTimer.singleShot(250, _deferred_renderer_repair)
+                except Exception:
+                    # Fallback: try immediate best-effort repair if timers are unavailable
+                    try:
+                        from EPCMRLib.Utilities.RendererRepairManager import RendererRepairManager
+
+                        RendererRepairManager().repairAllRenderers()
+                    except Exception:
+                        pass
+                    slicer.app._EPCMR_renderer_repair_done = True
+        except Exception:
+            pass
+
     def registerModuleToolBarButton(self):
         """Adds the EPCMR icon to the main Slicer toolbar."""
         mw = slicer.util.mainWindow()

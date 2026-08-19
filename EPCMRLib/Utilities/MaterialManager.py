@@ -61,7 +61,7 @@ class MaterialManager:
     # ------------------------------------------------------------------
     def applyRimGlow(self, modelNode, color=None):
         """
-        Apply rim glow material preset to a single modelNode.
+        CARTO-style rim glow: subtle, warm, tight Fresnel, non-destructive.
         Idempotent: safe to call repeatedly.
         """
         if not modelNode:
@@ -72,25 +72,32 @@ class MaterialManager:
         if not dn:
             return
 
-        # Rim glow material preset
+        # --- CARTO baseline lighting ---
         dn.SetLighting(True)
         dn.SetShading(True)
 
-        # Strong rim-like highlight
-        dn.SetAmbient(0.80)
-        dn.SetDiffuse(0.10)
-        dn.SetSpecular(1.00)
-        dn.SetPower(80.0)
+        # CARTO keeps ambient low and diffuse high
+        dn.SetAmbient(0.06)
+        dn.SetDiffuse(0.88)
 
-        dn.SetBackfaceCulling(False)
-        dn.SetEdgeVisibility(False)
+        # Specular almost off
+        dn.SetSpecular(0.04)
+        try:
+            dn.SetPower(8)
+        except AttributeError:
+            pass
 
-        # Optional color override
-        if color is not None:
-            try:
-                dn.SetColor(color[0], color[1], color[2])
-            except Exception:
-                pass
+        # --- Fresnel rim parameters (CARTO-style) ---
+        rimIntensity = 0.12  # subtle
+        rimPower = 2.4  # tight falloff
+        rimColor = color if color else (1.0, 0.65, 0.45)  # warm CARTO tone
+
+        # Store parameters for shader callback
+        modelNode.SetAttribute("EPCMR_RimIntensity", str(rimIntensity))
+        modelNode.SetAttribute("EPCMR_RimPower", str(rimPower))
+        modelNode.SetAttribute("EPCMR_RimColorR", str(rimColor[0]))
+        modelNode.SetAttribute("EPCMR_RimColorG", str(rimColor[1]))
+        modelNode.SetAttribute("EPCMR_RimColorB", str(rimColor[2]))
 
         # Mark node
         try:
@@ -98,20 +105,16 @@ class MaterialManager:
         except Exception:
             pass
 
+        modelNode.Modified()
+
     # ------------------------------------------------------------------
     # Rim Overlay (idempotent)
     # ------------------------------------------------------------------
     def applyRimOverlay(self, modelNode, overlaySuffix="_rimOverlay"):
         """
-        Idempotent rim overlay:
-          - Finds or creates a single overlay model for the given modelNode.
-          - Reuses existing overlay if present (no duplicates).
-          - Updates overlay geometry if base geometry changed.
-          - Applies strong rim-like material (halo effect).
-          - Follows base transforms.
-          - Does not save overlay with scene.
+        CARTO-style overlay: extremely subtle, only enhances edges.
+        Idempotent: safe to call repeatedly.
         """
-
         if not modelNode:
             return None
 
@@ -120,61 +123,45 @@ class MaterialManager:
 
         # 1. Try to find existing overlay
         overlay = slicer.util.getFirstNodeByName(overlayName)
-        if overlay and overlay.IsA("vtkMRMLModelNode"):
-            # Update geometry if base changed
-            try:
-                basePD = modelNode.GetPolyData()
-                if basePD:
-                    pd = vtk.vtkPolyData()
-                    pd.ShallowCopy(basePD)
-                    overlay.SetAndObservePolyData(pd)
-            except Exception:
-                pass
-        else:
-            # 2. Create new overlay
+        if not overlay or not overlay.IsA("vtkMRMLModelNode"):
             overlay = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode", overlayName)
-            try:
-                basePD = modelNode.GetPolyData()
-                if basePD:
-                    pd = vtk.vtkPolyData()
-                    pd.ShallowCopy(basePD)
-                    overlay.SetAndObservePolyData(pd)
-            except Exception:
-                pass
 
-        # 3. Ensure display node exists
+        # 2. Sync geometry
         try:
-            overlay.CreateDefaultDisplayNodes()
-            dn = overlay.GetDisplayNode()
-        except Exception:
-            return overlay
-
-        if not dn:
-            return overlay
-
-        # 4. Strong rim-like material (halo)
-        try:
-            dn.SetLighting(True)
-            dn.SetShading(True)
-            dn.SetOpacity(0.25)
-
-            dn.SetAmbient(0.8)
-            dn.SetDiffuse(0.1)
-            dn.SetSpecular(1.0)
-            dn.SetPower(80.0)
-
-            dn.SetBackfaceCulling(False)
-            dn.SetEdgeVisibility(False)
+            basePD = modelNode.GetPolyData()
+            if basePD:
+                pd = vtk.vtkPolyData()
+                pd.ShallowCopy(basePD)
+                overlay.SetAndObservePolyData(pd)
         except Exception:
             pass
 
-        # 5. Follow base transform
+        # 3. Ensure display node exists
+        overlay.CreateDefaultDisplayNodes()
+        dn = overlay.GetDisplayNode()
+        if not dn:
+            return overlay
+
+        # --- CARTO-style overlay (very subtle) ---
+        dn.SetLighting(True)
+        dn.SetShading(True)
+
+        dn.SetOpacity(0.05)  # extremely subtle
+        dn.SetAmbient(0.10)
+        dn.SetDiffuse(0.20)
+        dn.SetSpecular(0.05)
+        dn.SetPower(10.0)
+
+        dn.SetBackfaceCulling(False)
+        dn.SetEdgeVisibility(False)
+
+        # 4. Follow base transform
         try:
             overlay.SetAndObserveTransformNodeID(modelNode.GetTransformNodeID())
         except Exception:
             pass
 
-        # 6. Do not save overlay with scene
+        # 5. Do not save overlay with scene
         try:
             overlay.SetSaveWithScene(False)
         except Exception:

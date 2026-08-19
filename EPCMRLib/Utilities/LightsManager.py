@@ -65,6 +65,55 @@ class LightsManager:
         if getattr(self, "_lightingInstalled", False):
             return
 
+        # ------------------------------------------------------------------
+        # Ensure renderer GL/lighting state is healthy before installing lights
+        # ------------------------------------------------------------------
+        # Run a non-destructive renderer repair once per LightsManager instance.
+        # This prevents adding lights into a corrupted GL state (common after
+        # sandbox/module reloads). The guard keeps this idempotent per instance.
+        try:
+            if not getattr(self, "_rendererRepairAttempted", False):
+                try:
+                    # Defer repair if the layoutManager is not yet available to avoid
+                    # "no layoutManager available" messages during early startup.
+                    from PyQt5 import QtCore
+
+                    from EPCMRLib.Utilities.RendererRepairManager import RendererRepairManager
+
+                    def _do_repair():
+                        try:
+                            RendererRepairManager().repairAllRenderers()
+                        except Exception:
+                            pass
+                        # mark attempted even if repair failed to avoid repeated attempts
+                        self._rendererRepairAttempted = True
+
+                    try:
+                        if slicer.app.layoutManager():
+                            # layoutManager available now — run immediately
+                            _do_repair()
+                        else:
+                            # schedule shortly after event loop starts
+                            QtCore.QTimer.singleShot(250, _do_repair)
+                    except Exception:
+                        # fallback: best-effort immediate call
+                        try:
+                            RendererRepairManager().repairAllRenderers()
+                        except Exception:
+                            pass
+                        self._rendererRepairAttempted = True
+
+                except Exception:
+                    # Import or repair failure must not stop lighting setup
+                    try:
+                        # As a final fallback, mark attempted so we don't retry repeatedly
+                        self._rendererRepairAttempted = True
+                    except Exception:
+                        pass
+        except Exception:
+            # Defensive: any attribute errors should not break setupLighting
+            pass
+
         lm = slicer.app.layoutManager()
         if not lm:
             logging.warning("LightsManager.setupLighting: no layoutManager available")
@@ -89,126 +138,229 @@ class LightsManager:
             if not renderer:
                 continue
 
-            # Remove all existing lights to prevent double-stacking on cold startup
-            lights = renderer.GetLights()
-            lights.InitTraversal()
-            existingLights = []
-            l = lights.GetNextItem()
-            while l:
-                existingLights.append(l)
-                l = lights.GetNextItem()
-            for l in existingLights:
-                try:
-                    renderer.RemoveLight(l)
-                except Exception:
-                    pass
+            # ------------------------------------------------------------------
+            # CRITICAL: ensure renderer uses scene lights and not automatic headlight
+            # ------------------------------------------------------------------
+            try:
+                # LightKit APIs are not present in some VTK builds; avoid calling them.
+                # Instead, explicitly disable automatic headlight so scene lights are used.
+                if hasattr(renderer, "SetAutomaticLightCreation"):
+                    try:
+                        renderer.SetAutomaticLightCreation(0)
+                    except Exception:
+                        # Some builds expose different names; ignore failures
+                        pass
+                else:
+                    # older API names (best-effort)
+                    try:
+                        renderer.AutomaticLightCreationOff()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
-            # Remove default headlight
-            lights = renderer.GetLights()
-            lights.InitTraversal()
-            head = lights.GetNextItem()
-            if head:
+            # Ensure renderWindow multisampling is enabled where possible (helps depth peeling)
+            try:
+                rw = view.renderWindow()
                 try:
-                    renderer.RemoveLight(head)
+                    rw.SetMultiSamples(8)
                 except Exception:
+                    # Not all builds allow changing multisamples at runtime; ignore
                     pass
+            except Exception:
+                rw = None
+
+            # Remove all existing lights to prevent double-stacking on cold startup
+            try:
+                lights = renderer.GetLights()
+                lights.InitTraversal()
+                existingLights = []
+                l = lights.GetNextItem()
+                while l:
+                    existingLights.append(l)
+                    l = lights.GetNextItem()
+                for l in existingLights:
+                    try:
+                        renderer.RemoveLight(l)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # Remove default headlight if present (safe sweep)
+            try:
+                lights = renderer.GetLights()
+                lights.InitTraversal()
+                head = lights.GetNextItem()
+                if head:
+                    try:
+                        renderer.RemoveLight(head)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
             viewLights = []
 
             # Rim light
-            rim = vtk.vtkLight()
-            rim.SetLightTypeToSceneLight()
-            rim.SetPosition(-140, -310, 210)
-            rim.SetFocalPoint(0, 0, 0)
-            rim.SetColor(0.60, 0.70, 1.00)
-            rim.SetIntensity(0.28)
-            renderer.AddLight(rim)
-            viewLights.append(rim)
+            try:
+                rim = vtk.vtkLight()
+                rim.SetLightTypeToSceneLight()
+                rim.SetPosition(-140, -310, 210)
+                rim.SetFocalPoint(0, 0, 0)
+                rim.SetColor(0.60, 0.70, 1.00)
+                rim.SetIntensity(0.28)
+                renderer.AddLight(rim)
+                viewLights.append(rim)
+            except Exception:
+                pass
 
             # Fill light
-            fill = vtk.vtkLight()
-            fill.SetLightTypeToSceneLight()
-            fill.SetPosition(0, 300, 120)
-            fill.SetFocalPoint(0, 0, 0)
-            fill.SetColor(1.00, 0.85, 0.70)
-            fill.SetIntensity(0.22)
-            renderer.AddLight(fill)
-            viewLights.append(fill)
+            try:
+                fill = vtk.vtkLight()
+                fill.SetLightTypeToSceneLight()
+                fill.SetPosition(0, 300, 120)
+                fill.SetFocalPoint(0, 0, 0)
+                fill.SetColor(1.00, 0.85, 0.70)
+                fill.SetIntensity(0.22)
+                renderer.AddLight(fill)
+                viewLights.append(fill)
+            except Exception:
+                pass
 
             # Catheter lights
-            catFront = vtk.vtkLight()
-            catFront.SetLightTypeToSceneLight()
-            catFront.SetPosition(120, -80, 180)
-            catFront.SetFocalPoint(0, 0, 0)
-            catFront.SetColor(1.00, 1.00, 1.00)
-            catFront.SetIntensity(0.85)
-            renderer.AddLight(catFront)
-            viewLights.append(catFront)
+            try:
+                catFront = vtk.vtkLight()
+                catFront.SetLightTypeToSceneLight()
+                catFront.SetPosition(120, -80, 180)
+                catFront.SetFocalPoint(0, 0, 0)
+                catFront.SetColor(1.00, 1.00, 1.00)
+                catFront.SetIntensity(0.85)
+                renderer.AddLight(catFront)
+                viewLights.append(catFront)
+            except Exception:
+                catFront = None
 
-            catRear = vtk.vtkLight()
-            catRear.SetLightTypeToSceneLight()
-            catRear.SetPosition(-120, 80, -160)
-            catRear.SetFocalPoint(0, 0, 0)
-            catRear.SetColor(1.00, 1.00, 1.00)
-            catRear.SetIntensity(0.65)
-            renderer.AddLight(catRear)
-            viewLights.append(catRear)
+            try:
+                catRear = vtk.vtkLight()
+                catRear.SetLightTypeToSceneLight()
+                catRear.SetPosition(-120, 80, -160)
+                catRear.SetFocalPoint(0, 0, 0)
+                catRear.SetColor(1.00, 1.00, 1.00)
+                catRear.SetIntensity(0.65)
+                renderer.AddLight(catRear)
+                viewLights.append(catRear)
+            except Exception:
+                catRear = None
 
-            catTop = vtk.vtkLight()
-            catTop.SetLightTypeToSceneLight()
-            catTop.SetPosition(0, 0, 260)
-            catTop.SetFocalPoint(0, 0, 0)
-            catTop.SetColor(1.00, 1.00, 1.00)
-            catTop.SetIntensity(0.55)
-            renderer.AddLight(catTop)
-            viewLights.append(catTop)
+            try:
+                catTop = vtk.vtkLight()
+                catTop.SetLightTypeToSceneLight()
+                catTop.SetPosition(0, 0, 260)
+                catTop.SetFocalPoint(0, 0, 0)
+                catTop.SetColor(1.00, 1.00, 1.00)
+                catTop.SetIntensity(0.55)
+                renderer.AddLight(catTop)
+                viewLights.append(catTop)
+            except Exception:
+                catTop = None
 
             for catLight in (catFront, catRear, catTop):
-                catLight.SetAmbientColor(1.0, 1.0, 1.0)
-                catLight.SetDiffuseColor(1.0, 1.0, 1.0)
-                catLight.SetSpecularColor(1.0, 1.0, 1.0)
+                try:
+                    if catLight:
+                        catLight.SetAmbientColor(1.0, 1.0, 1.0)
+                        catLight.SetDiffuseColor(1.0, 1.0, 1.0)
+                        catLight.SetSpecularColor(1.0, 1.0, 1.0)
+                except Exception:
+                    pass
 
             # Ambient anatomy light
-            ambient = vtk.vtkLight()
-            ambient.SetLightTypeToSceneLight()
-            ambient.SetPosition(0, 0, 0)
-            ambient.SetFocalPoint(0, 0, 0)
-            ambient.SetColor(0.95, 0.95, 1.00)
-            ambient.SetIntensity(0.75)
-            renderer.AddLight(ambient)
-            viewLights.append(ambient)
+            try:
+                ambient = vtk.vtkLight()
+                ambient.SetLightTypeToSceneLight()
+                ambient.SetPosition(0, 0, 0)
+                ambient.SetFocalPoint(0, 0, 0)
+                ambient.SetColor(0.95, 0.95, 1.00)
+                ambient.SetIntensity(0.75)
+                renderer.AddLight(ambient)
+                viewLights.append(ambient)
+            except Exception:
+                pass
 
             # Under-light
-            under = vtk.vtkLight()
-            under.SetLightTypeToSceneLight()
-            under.SetPosition(0, -400, -200)
-            under.SetFocalPoint(0, 0, 0)
-            under.SetColor(0.85, 0.90, 1.00)
-            under.SetIntensity(0.75)
-            renderer.AddLight(under)
-            viewLights.append(under)
+            try:
+                under = vtk.vtkLight()
+                under.SetLightTypeToSceneLight()
+                under.SetPosition(0, -400, -200)
+                under.SetFocalPoint(0, 0, 0)
+                under.SetColor(0.85, 0.90, 1.00)
+                under.SetIntensity(0.75)
+                renderer.AddLight(under)
+                viewLights.append(under)
+            except Exception:
+                pass
 
             # No-shadow ambient light
-            noShadow = vtk.vtkLight()
-            noShadow.SetLightTypeToSceneLight()
-            noShadow.SetPosition(0, 0, 0)
-            noShadow.SetFocalPoint(0, 0, 0)
-            noShadow.SetColor(1.0, 1.0, 1.0)
-            noShadow.SetIntensity(0.55)
-            noShadow.SetAmbientColor(1.0, 1.0, 1.0)
-            noShadow.SetDiffuseColor(0.0, 0.0, 0.0)
-            noShadow.SetSpecularColor(0.0, 0.0, 0.0)
-            renderer.AddLight(noShadow)
-            viewLights.append(noShadow)
+            try:
+                noShadow = vtk.vtkLight()
+                noShadow.SetLightTypeToSceneLight()
+                noShadow.SetPosition(0, 0, 0)
+                noShadow.SetFocalPoint(0, 0, 0)
+                noShadow.SetColor(1.0, 1.0, 1.0)
+                noShadow.SetIntensity(0.55)
+                # Use ambient/diffuse/specular color setters if available
+                try:
+                    noShadow.SetAmbientColor(1.0, 1.0, 1.0)
+                except Exception:
+                    pass
+                try:
+                    noShadow.SetDiffuseColor(0.0, 0.0, 0.0)
+                except Exception:
+                    pass
+                try:
+                    noShadow.SetSpecularColor(0.0, 0.0, 0.0)
+                except Exception:
+                    pass
+                renderer.AddLight(noShadow)
+                viewLights.append(noShadow)
+            except Exception:
+                pass
 
             self._lightsPerView[vid] = viewLights
 
             # Renderer quality settings
             try:
-                renderer.UseFXAAOn()
-                renderer.SetUseDepthPeeling(1)
-                renderer.SetMaximumNumberOfPeels(50)
-                renderer.SetOcclusionRatio(0.1)
+                # FXAA and depth peeling can conflict; disable FXAA when using depth peeling
+                # Prefer API variants depending on VTK build
+                try:
+                    if hasattr(renderer, "UseFXAAOff"):
+                        renderer.UseFXAAOff()
+                    elif hasattr(renderer, "SetUseFXAA"):
+                        renderer.SetUseFXAA(0)
+                except Exception:
+                    # ignore FXAA toggle failures
+                    pass
+
+                # Enable depth peeling only if multisampling is available or if enabling succeeds
+                try:
+                    if hasattr(renderer, "SetUseDepthPeeling"):
+                        # If multisampling was set on the renderWindow above, depth peeling is more likely to work
+                        renderer.SetUseDepthPeeling(1)
+                        try:
+                            renderer.SetMaximumNumberOfPeels(50)
+                        except Exception:
+                            pass
+                        try:
+                            renderer.SetOcclusionRatio(0.1)
+                        except Exception:
+                            pass
+                except Exception:
+                    # If depth peeling fails, disable it to avoid VTK disabling lights silently
+                    try:
+                        if hasattr(renderer, "SetUseDepthPeeling"):
+                            renderer.SetUseDepthPeeling(0)
+                    except Exception:
+                        pass
             except Exception:
                 logging.warning("LightsManager.setupLighting: renderer quality settings failed")
 
