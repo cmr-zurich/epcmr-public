@@ -818,6 +818,7 @@ class SceneManager:
 
         # Apply centralized defaults and then set any anatomy-specific overrides
         self.applyMaterialDefaultsToNode(modelNode, preserveOpacity=False)
+
         # keep the normalized anatomy opacity target
         try:
             dn.SetOpacity(0.60)
@@ -827,16 +828,24 @@ class SceneManager:
         dn.SetLighting(True)
         dn.SetShading(True)
 
+        # ------------------------------------------------------------------
+        # *** FIX: FORCE PHONG INTERPOLATION (Gouraud caused faceting) ***
+        # ------------------------------------------------------------------
         try:
-            if hasattr(dn, "SetInterpolationToGouraud"):
-                dn.SetInterpolationToGouraud()
-        except AttributeError:
+            if hasattr(dn, "SetInterpolationToPhong"):
+                dn.SetInterpolationToPhong()
+            else:
+                dn.SetInterpolation(2)  # fallback for older VTK
+        except Exception:
             pass
 
         polyData = modelNode.GetPolyData()
         if not polyData:
             return
 
+        # ------------------------------------------------------------------
+        # Normals recomputation (safe + deterministic)
+        # ------------------------------------------------------------------
         normals = vtk.vtkPolyDataNormals()
         normals.SetInputData(polyData)
         normals.SetSplitting(0)
