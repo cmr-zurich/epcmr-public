@@ -477,6 +477,33 @@ class SceneManager:
             except AttributeError:
                 pass
 
+        # --- ENABLE FXAA FOR SMOOTH EDGES ---
+        try:
+            lm = slicer.app.layoutManager()
+            if lm:
+                for i in range(lm.threeDViewCount):
+                    view = lm.threeDWidget(i).threeDView()
+                    rw = view.renderWindow()
+                    renderer = rw.GetRenderers().GetFirstRenderer()
+
+                    # FXAA ON (works with emissive geometry)
+                    try:
+                        if hasattr(renderer, "UseFXAAOn"):
+                            renderer.UseFXAAOn()
+                        elif hasattr(renderer, "SetUseFXAA"):
+                            renderer.SetUseFXAA(1)
+                    except Exception:
+                        pass
+
+            # Phong interpolation improves curvature before FXAA
+            try:
+                if is_vtk_at_least(9, 3):
+                    dn.SetInterpolationToPhong()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
         # Flush changes instantly to the GPU renderer with zero geometric overhead
         slicer.util.forceRenderAllViews()
 
@@ -936,6 +963,33 @@ class SceneManager:
             polyData.ShallowCopy(normals.GetOutput())
             polyData.Modified()
             modelNode.Modified()
+
+        # --- ENABLE FXAA + PHONG FOR SMOOTH EDGES ---
+        try:
+            lm = slicer.app.layoutManager()
+            if lm:
+                for i in range(lm.threeDViewCount):
+                    view = lm.threeDWidget(i).threeDView()
+                    rw = view.renderWindow()
+                    renderer = rw.GetRenderers().GetFirstRenderer()
+
+                    # FXAA ON (works with emissive geometry)
+                    try:
+                        if hasattr(renderer, "UseFXAAOn"):
+                            renderer.UseFXAAOn()
+                        elif hasattr(renderer, "SetUseFXAA"):
+                            renderer.SetUseFXAA(1)
+                    except Exception:
+                        pass
+
+            # Phong interpolation improves curvature before FXAA
+            try:
+                if is_vtk_at_least(9, 3):
+                    dn.SetInterpolationToPhong()
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def normalizeAllCathetersEmissive(self):
         modelNodes = slicer.util.getNodesByClass("vtkMRMLModelNode")
