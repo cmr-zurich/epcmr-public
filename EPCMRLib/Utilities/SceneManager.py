@@ -995,6 +995,18 @@ class SceneManager:
     # -----------------------------------------------------------------------------
 
     def normalizeCatheterAppearance(self, modelNode, emissive=False):
+        """
+        Normalize catheter appearance for consistent lighting and shading.
+
+        NOTE: normalizeCatheterAppearance() is the authoritative styling function
+        for catheter geometry (Abl / Ref), including lighting, shading, normals,
+        FXAA, and interpolation model enforcement.
+
+        This function also defines the shading interpolation model (Gouraud/Phong)
+        used for catheter rendering. Phong is enforced here to ensure smooth
+        curvature shading and consistent visual behavior across GPUs.
+        """
+
         if not modelNode:
             return
 
@@ -1056,10 +1068,14 @@ class SceneManager:
 
             # Phong interpolation improves curvature before FXAA
             try:
-                if is_vtk_at_least(9, 3):
+                # --- AUTHORITATIVE PHONG ENFORCEMENT FOR CATHETERS ---
+                if hasattr(dn, "SetInterpolationToPhong"):
                     dn.SetInterpolationToPhong()
+                else:
+                    dn.SetInterpolation(2)  # fallback for older VTK
             except Exception:
                 pass
+
         except Exception:
             pass
 
