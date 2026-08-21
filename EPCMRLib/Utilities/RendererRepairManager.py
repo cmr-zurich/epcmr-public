@@ -22,6 +22,7 @@ import time
 import slicer
 import vtk
 
+
 class RendererRepairManager:
     def __init__(self, lightsManagerCallback=None, logger=None):
         """
@@ -70,27 +71,25 @@ class RendererRepairManager:
 
             # 1) Ensure multisampling is enabled (helps depth peeling and correct shading)
             try:
-                # Try a conservative multisample value
                 rw.SetMultiSamples(8)
                 self.logger.debug("Set renderWindow multisamples to 8")
             except Exception:
                 self.logger.debug("SetMultiSamples not supported or failed")
 
-            # 2) Turn off FXAA (FXAA can disable multisampling combos)
-            try:
-                # Use attribute if available
-                if hasattr(ren, "UseFXAAOff"):
-                    ren.UseFXAAOff()
-                    self.logger.debug("Called UseFXAAOff()")
-                else:
-                    # Some VTK builds expose UseFXAA as SetUseFXAA
-                    try:
-                        ren.SetUseFXAA(0)
-                        self.logger.debug("Called SetUseFXAA(0)")
-                    except Exception:
-                        self.logger.debug("FXAA toggle not available")
-            except Exception:
-                self.logger.debug("FXAA toggle failed")
+            # 2) (Legacy) FXAA disable step removed — FXAA is now enabled at the end.
+            #    Old block kept commented for reference.
+            # try:
+            #     if hasattr(ren, "UseFXAAOff"):
+            #         ren.UseFXAAOff()
+            #         self.logger.debug("Called UseFXAAOff()")
+            #     else:
+            #         try:
+            #             ren.SetUseFXAA(0)
+            #             self.logger.debug("Called SetUseFXAA(0)")
+            #         except Exception:
+            #             self.logger.debug("FXAA toggle not available")
+            # except Exception:
+            #     self.logger.debug("FXAA toggle failed")
 
             # 3) Temporarily disable depth peeling to avoid broken pipeline
             try:
@@ -106,7 +105,6 @@ class RendererRepairManager:
                     ren.SetAutomaticLightCreation(0)
                     self.logger.debug("Disabled automatic headlight (SetAutomaticLightCreation(0))")
                 else:
-                    # fallback: try to remove any headlight explicitly later
                     self.logger.debug("SetAutomaticLightCreation not available")
             except Exception:
                 self.logger.debug("SetAutomaticLightCreation failed")
@@ -131,7 +129,6 @@ class RendererRepairManager:
             # 6) Force a GL reinit by rendering and a short pause
             try:
                 rw.Render()
-                # small pause to allow GL driver to settle
                 time.sleep(0.05)
                 self.logger.debug("Forced render to reinit GL state")
             except Exception:
@@ -143,7 +140,6 @@ class RendererRepairManager:
                     self.logger.debug("Calling provided lightsManagerCallback()")
                     self.lightsManagerCallback()
                 else:
-                    # Try to find EPCMR lights manager automatically
                     try:
                         w = slicer.modules.epcmr.widgetRepresentation().self()
                         logic = getattr(w, "logic", None)
@@ -154,7 +150,6 @@ class RendererRepairManager:
                                 lmgr.resetLighting()
                                 lmgr.setupLighting()
                             except Exception:
-                                # fallback: call setupLighting only
                                 try:
                                     lmgr.setupLighting()
                                 except Exception:
@@ -168,7 +163,6 @@ class RendererRepairManager:
 
             # 8) Re-enable depth peeling only if multisampling is available and supported
             try:
-                # Try enabling depth peeling if supported
                 if hasattr(ren, "SetUseDepthPeeling"):
                     ren.SetUseDepthPeeling(1)
                     ren.SetMaximumNumberOfPeels(50)
@@ -177,7 +171,20 @@ class RendererRepairManager:
             except Exception:
                 self.logger.debug("Re-enabling depth peeling failed; leaving it disabled")
 
-            # 9) Final render and sanity check
+            # 9) Enable FXAA BEFORE final render (Option A)
+            try:
+                if hasattr(ren, "UseFXAAOn"):
+                    ren.UseFXAAOn()
+                    self.logger.debug("FXAA enabled via UseFXAAOn()")
+                elif hasattr(ren, "SetUseFXAA"):
+                    ren.SetUseFXAA(1)
+                    self.logger.debug("FXAA enabled via SetUseFXAA(1)")
+                else:
+                    self.logger.debug("FXAA not available on this VTK build")
+            except Exception:
+                self.logger.debug("FXAA enable failed")
+
+            # 10) Final render and sanity check (now AFTER FXAA + lighting)
             try:
                 rw.Render()
                 slicer.util.forceRenderAllViews()
@@ -185,7 +192,7 @@ class RendererRepairManager:
             except Exception:
                 self.logger.warning("RendererRepairManager: final render failed")
 
-            # 10) Quick verification: count lights
+            # 11) Quick verification: count lights
             try:
                 count = ren.GetLights().GetNumberOfItems()
                 self.logger.info(f"RendererRepairManager: lights after repair: {count}")
@@ -219,11 +226,12 @@ class RendererRepairManager:
             actor.GetProperty().SetColor(1.0, 0.6, 0.2)
             actor.GetProperty().SetDiffuse(0.95)
             actor.GetProperty().SetSpecular(0.05)
-            actor.SetPosition(0,0,0)
+            actor.SetPosition(0, 0, 0)
             ren.AddActor(actor)
             view.forceRender()
             return actor
         except Exception:
             return None
+
 
 # End of RendererRepairManager.py

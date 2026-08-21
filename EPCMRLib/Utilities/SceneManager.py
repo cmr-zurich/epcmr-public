@@ -695,13 +695,23 @@ class SceneManager:
                 modelNode.CreateDefaultDisplayNodes()
                 dn = modelNode.GetDisplayNode()
 
-                # PRIOR SETTTINGS
-                # dn.SetScalarVisibility(False)
-                # dn.SetColor(*config["color"])
-                # dn.SetOpacity(0.6)
-                # dn.SetAmbient(0.15)
-                # dn.SetBackfaceCulling(False)
-                # dn.SetVisibility(True)
+                # ------------------------------------------------------------------
+                # CORE FIX: ensure anatomical polydata has normals
+                # ------------------------------------------------------------------
+                try:
+                    poly = modelNode.GetPolyData()
+                    if poly and poly.GetNumberOfPoints() > 0:
+                        normals = vtk.vtkPolyDataNormals()
+                        normals.SetInputData(poly)
+                        normals.SetFeatureAngle(60.0)
+                        normals.SplittingOff()
+                        normals.ConsistencyOn()
+                        normals.AutoOrientNormalsOn()
+                        normals.ComputePointNormalsOn()  # <- FIXED VERSION
+                        normals.Update()
+                        modelNode.SetAndObservePolyData(normals.GetOutput())
+                except Exception:
+                    pass
 
                 dn.SetScalarVisibility(False)
                 dn.SetColor(*config["color"])
@@ -720,6 +730,59 @@ class SceneManager:
                 if getattr(self, "rimGlowEnabled", False):
                     # Delegate rim glow to MaterialManager
                     self.materialManager.applyRimGlow(modelNode)
+
+                # ------------------------------------------------------------------
+                # *** CRITICAL FIX FOR FACETED VS SMOOTH STARTUP ***
+                #
+                # VTK mappers created BEFORE lighting/material pipeline exists
+                # initialize in FLAT shading mode.
+                #
+                # Reload creates NEW mappers AFTER pipeline exists → smooth shading.
+                #
+                # Therefore: force mapper REBUILD here, exactly when anatomy appears.
+                # ------------------------------------------------------------------
+                try:
+                    poly = modelNode.GetPolyData()
+                    if poly:
+                        # Force mapper to rebuild by replacing it
+                        mapper = vtk.vtkPolyDataMapper()
+                        mapper.SetInputData(poly)
+
+                        # Smooth shading
+                        try:
+                            mapper.SetInterpolationToPhong()
+                        except Exception:
+                            try:
+                                mapper.SetInterpolation(2)  # 2 = Phong in many VTK builds
+                            except Exception:
+                                pass
+
+                        # Reattach mapper to all renderers that use this model
+                        lm = slicer.app.layoutManager()
+                        if lm:
+                            for i in range(lm.threeDViewCount):
+                                view = lm.threeDWidget(i).threeDView()
+                                renderer = view.renderWindow().GetRenderers().GetFirstRenderer()
+                                props = renderer.GetViewProps()
+                                props.InitTraversal()
+                                p = props.GetNextProp()
+                                while p:
+                                    if hasattr(p, "GetMapper"):
+                                        m = p.GetMapper()
+                                        try:
+                                            if m and m.GetInput() == poly:
+                                                p.SetMapper(mapper)
+                                        except Exception:
+                                            pass
+                                    p = props.GetNextProp()
+                except Exception:
+                    pass
+
+                # Flush to renderer so mapper replacement takes effect immediately
+                try:
+                    slicer.util.forceRenderAllViews()
+                except Exception:
+                    pass
 
                 return True
 

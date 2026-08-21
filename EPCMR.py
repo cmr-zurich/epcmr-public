@@ -724,6 +724,23 @@ class EPCMRLogic(ScriptedLoadableModuleLogic):
                             self.sceneManager.pNode.rvModel = callData
 
                     if wasAnatomy:
+                        # ------------------------------------------------------------------
+                        # DEFERRED PASS:
+                        #   Drag-and-drop model nodes may have their polydata populated
+                        #   AFTER NodeAddedEvent. The first autoColorAnatomy() call can
+                        #   see an empty polydata (0 points) and skip normals.
+                        #
+                        #   To guarantee normals on the FINAL anatomy polydata,
+                        #   schedule a second autoColorAnatomy() in the next event loop
+                        #   cycle, when the loader has finished attaching geometry.
+                        # ------------------------------------------------------------------
+                        try:
+                            qt.QTimer.singleShot(
+                                0,
+                                lambda n=callData: self.sceneManager.autoColorAnatomy(n),
+                            )
+                        except Exception:
+                            pass
                         return
 
             # Catheters: Abl / Ref - apply clinical styling for black background
