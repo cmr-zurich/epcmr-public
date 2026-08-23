@@ -564,6 +564,16 @@ class SceneManager:
             os.makedirs(self.sessionBackupPath, exist_ok=True)
             logging.info(f"SceneManager: Created session backup folder {self.sessionBackupPath}")
 
+    # ---------------------------------------------------------------------------
+    # IMPORTANT NOTE: Known limitation in Slicer 5.12.x:
+    # - Interactive dragging of Markups control points blocks the Qt event loop.
+    # - During drag, TransformModifiedEvent cannot fire, so catheter motion appears frozen.
+    # - Motion resumes immediately when the mouse is released.
+    # - This is a Slicer core behavior and cannot be overridden from Python.
+    # - A real fix requires a change in Slicer C++ (vtkMRMLMarkupsDisplayableManager)
+    #   to reintroduce a non-modal interaction option.
+    # ---------------------------------------------------------------------------
+
     # ------------------------------------------------------------------
     # Markups observers + backup
     # ------------------------------------------------------------------
