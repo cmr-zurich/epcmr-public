@@ -354,8 +354,19 @@ class LightsManager:
                 pass
 
             # apply global scale to the lights we just created
+            # NOTE: _globalLightScale is the master brightness control
+            # (ie. adjust global brightness without touching individual light roles or material parameters)
+            # ---------------------------------------------------------------------------
+            # Global Light Scale Reference
+            # ---------------------------------------------------------------------------
+            # self._globalLightScale = 0.7   -> darker anatomy
+            # self._globalLightScale = 1.0   -> baseline brightness
+            # self._globalLightScale = 1.3   -> brighter anatomy
+            # self._globalLightScale = 1.6   -> strong illumination
+            # ---------------------------------------------------------------------------
+
             try:
-                self._globalLightScale = getattr(self, "_globalLightScale", 1.0)
+                self._globalLightScale = getattr(self, "_globalLightScale", 1.1)
                 scale = float(self._globalLightScale)
                 if scale != 1.0:
                     for l in viewLights:

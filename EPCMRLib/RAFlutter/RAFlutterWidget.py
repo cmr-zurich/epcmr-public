@@ -69,7 +69,7 @@ class RAFlutterWidget(qt.QWidget):
         # self.setup()
 
         # This single line makes cold startup identical to reload;
-        # delays setup until the Qt event loop is running — meaning:
+        # delays setup until the Qt event loop is running - meaning:
         # - SceneManager is initialized
         # - ModelObserver is initialized
         # - RACloneManager has RA
