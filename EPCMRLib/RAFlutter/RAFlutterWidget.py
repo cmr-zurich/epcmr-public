@@ -66,7 +66,18 @@ class RAFlutterWidget(qt.QWidget):
         self._isProgrammaticDelete = False
 
         # --- 7. Build UI ---
-        self.setup()
+        # self.setup()
+
+        # This single line makes cold startup identical to reload;
+        # delays setup until the Qt event loop is running - meaning:
+        # - SceneManager is initialized
+        # - ModelObserver is initialized
+        # - RACloneManager has RA
+        # - Display nodes exist
+        # - Mappers exist
+        # - Normals can be computed on real polydata
+        # - Materials and lighting apply correctly
+        qt.QTimer.singleShot(0, self.setup)
 
     # ------------------------------------------------------------------
     # Internal UI helper class: thin horizontal divider (safe, no styled-mode)
