@@ -741,7 +741,7 @@ class SceneManager:
                 # VTK mappers created BEFORE lighting/material pipeline exists
                 # initialize in FLAT shading mode.
                 #
-                # Reload creates NEW mappers AFTER pipeline exists → smooth shading.
+                # Reload creates NEW mappers AFTER pipeline exists -> smooth shading.
                 #
                 # Therefore: force mapper REBUILD here, exactly when anatomy appears.
                 # ------------------------------------------------------------------
@@ -1036,7 +1036,7 @@ class SceneManager:
         if emissive:
             # --- ADJUSTED TO REDUCE OVERALL GLOW/BRIGHTNESS ---
             dn.SetAmbient(0.40)  # Lowered from 0.78 to blend shadows back in cleanly
-            dn.SetDiffuse(0.60)  # Increased from 0.45 to react nicely to layout lights
+            dn.SetDiffuse(0.32)  # Increased from 0.45 -> 0.60 to react nicely to layout lights
             dn.SetSpecular(0.30)  # Lowered from 0.45 to eliminate harsh pinpoint glare
 
         # Compute explicit surface normal fields to smooth out cylinder edges

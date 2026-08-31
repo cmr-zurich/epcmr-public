@@ -76,7 +76,7 @@ class RendererRepairManager:
             except Exception:
                 self.logger.debug("SetMultiSamples not supported or failed")
 
-            # 2) (Legacy) FXAA disable step removed — FXAA is now enabled at the end.
+            # 2) (Legacy) FXAA disable step removed - FXAA is now enabled at the end.
             #    Old block kept commented for reference.
             # try:
             #     if hasattr(ren, "UseFXAAOff"):
