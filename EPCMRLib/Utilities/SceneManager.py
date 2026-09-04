@@ -8,9 +8,35 @@ import slicer
 import vtk
 
 from EPCMRLib.EPCMRParameterNode import EPCMRParameterNode
+from EPCMRLib.Utilities.MaterialManager import MaterialManager
 from EPCMRLib.Utilities.LightsManager import LightsManager
 
 VTK_VERSION = (vtk.vtkVersion.GetVTKMajorVersion(), vtk.vtkVersion.GetVTKMinorVersion())
+
+# ---------------------------------------------------------------------------
+# EPCMR Architecture: SceneManager <-> MaterialManager
+#
+# SceneManager:
+#   - Orchestrates high-level scene behavior.
+#   - Decides which anatomical or clinical nodes should receive rim glow,
+#     overlays, normalization, or resets.
+#   - Owns ANATOMY_MAP, lighting rig, scalar bars, markups observers,
+#     backups, and RA/voltage mapping pipelines.
+#   - Delegates all material-related operations to MaterialManager.
+#
+# MaterialManager:
+#   - Executes rim glow presets, rim overlays, and material resets.
+#   - Provides idempotent, deterministic material operations.
+#   - Never decides which nodes to modify; only performs the work requested
+#     by SceneManager.
+#   - Ensures clean separation of concerns and prevents SceneManager from
+#     accumulating rendering or material logic.
+#
+# Result:
+#   - SceneManager remains a pure coordinator.
+#   - MaterialManager owns all shading and material responsibilities.
+#   - Architecture is symmetric with LightsManager and easier to maintain.
+# ---------------------------------------------------------------------------
 
 
 def is_vtk_at_least(major: int, minor: int) -> bool:
@@ -36,6 +62,8 @@ class SceneManager:
         (delegates to GeometryInterpolator via ModelObserver facade)
       - Maintain dual scalar bars (Activation / Voltage) with legends
         reflecting the REAL data range of the RA clone
+      - Delegate all rim-glow and material operations to MaterialManager
+        (SceneManager orchestrates, MaterialManager executes)
 
     Restore-safety:
       - During backup restore, isRestoringBackup is set True.
@@ -63,8 +91,25 @@ class SceneManager:
         # ---------------------------------------------------------
         # Manage Rim Shading/Glow
         # ---------------------------------------------------------
-
+        # Rim glow is now handled by MaterialManager (idempotent)
+        # SceneManager only orchestrates which nodes receive rim glow.
+        self.materialManager = MaterialManager(self)
         self.rimGlowEnabled = False
+
+        # ---------------------------------------------------------
+        # Material defaults (centralized)
+        # ---------------------------------------------------------
+        # These defaults favor high diffuse, low ambient, modest specular,
+        # and full opacity so scene lights produce visible shading.
+        self._materialDefaults = {
+            "ambient": 0.02,
+            "diffuse": 0.95,
+            "specular": 0.03,
+            "power": 10.0,
+            "opacity": 1.0,
+            # optional multiplicative scale for runtime tuning
+            "scale": getattr(self, "_materialDefaultsScale", 1.0),
+        }
 
         # ---------------------------------------------------------
         # Sascha's Rainbow procedural color node (singleton)
@@ -173,31 +218,88 @@ class SceneManager:
     # Rim Shading/Glow
     # ------------------------------------------------------------------
 
-    # Strong Preset
-    def boostRimGlow(self, modelNode):
-        dn = modelNode.GetDisplayNode()
-        if not dn:
-            return
-
-        dn.SetBackfaceCulling(False)
-        dn.SetAmbient(0.25)
-        dn.SetDiffuse(0.95)
-        dn.SetSpecular(0.35)
-        dn.SetPower(30)
-        dn.SetOpacity(0.75)
-
     # Reset preset (neutral Slicer defaults)
     def resetRimGlow(self, modelNode):
         dn = modelNode.GetDisplayNode()
         if not dn:
             return
 
+        # PRIOR SETTTINGS
+        # dn.SetBackfaceCulling(False)
+        # dn.SetAmbient(0.10)
+        # dn.SetDiffuse(0.90)
+        # dn.SetSpecular(0.10)
+        # dn.SetPower(10)
+        # # Do NOT touch opacity here - leave anatomy opacity unchanged
+
         dn.SetBackfaceCulling(False)
-        dn.SetAmbient(0.10)
-        dn.SetDiffuse(0.90)
-        dn.SetSpecular(0.10)
-        dn.SetPower(10)
-        # Do NOT touch opacity here — leave anatomy opacity unchanged
+        # apply defaults but preserve opacity
+        self.applyMaterialDefaultsToNode(modelNode, preserveOpacity=True)
+
+    def applyMaterialDefaultsToNode(self, modelNode, preserveOpacity=False):
+        """
+        Apply centralized material defaults to a model's display node.
+        preserveOpacity: if True, do not override the node's existing opacity.
+        """
+        if not modelNode:
+            return
+        modelNode.CreateDefaultDisplayNodes()
+        dn = modelNode.GetDisplayNode()
+        if not dn:
+            return
+
+        defaults = dict(self._materialDefaults)  # copy
+        scale = float(defaults.get("scale", 1.0))
+
+        try:
+            ambient = float(defaults.get("ambient", 0.02))
+            diffuse = float(defaults.get("diffuse", 0.95))
+            specular = float(defaults.get("specular", 0.03))
+            power = float(defaults.get("power", 10.0))
+            opacity = float(defaults.get("opacity", 1.0))
+        except Exception:
+            # fallback safe values
+            ambient, diffuse, specular, power, opacity = 0.02, 0.95, 0.03, 10.0, 1.0
+
+        # apply scale to diffuse/specular only (keeps ambient small)
+        diffuse = max(0.0, min(1.0, diffuse * scale))
+        specular = max(0.0, min(1.0, specular * scale))
+
+        try:
+            dn.SetAmbient(ambient)
+        except Exception:
+            pass
+        try:
+            dn.SetDiffuse(diffuse)
+        except Exception:
+            pass
+        try:
+            dn.SetSpecular(specular)
+        except Exception:
+            pass
+        try:
+            dn.SetPower(power)
+        except Exception:
+            pass
+        if not preserveOpacity:
+            try:
+                dn.SetOpacity(opacity)
+            except Exception:
+                pass
+
+        # Ensure lighting/shading are enabled for anatomy by default
+        try:
+            dn.SetLighting(True)
+            dn.SetShading(True)
+        except Exception:
+            pass
+
+        # Ensure scalar visibility is off by default for anatomy unless explicitly used
+        try:
+            if not dn.GetActiveScalarName():
+                dn.SetScalarVisibility(False)
+        except Exception:
+            pass
 
     def applyRimGlowToAnatomy(self):
         keywords = []
@@ -207,7 +309,8 @@ class SceneManager:
         for node in slicer.util.getNodesByClass("vtkMRMLModelNode"):
             name = node.GetName().lower()
             if any(k in name for k in keywords):
-                self.boostRimGlow(node)
+                # Delegate to MaterialManager
+                self.materialManager.applyRimGlow(node)
 
     def resetRimGlowOnAnatomy(self):
         keywords = []
@@ -217,15 +320,18 @@ class SceneManager:
         for node in slicer.util.getNodesByClass("vtkMRMLModelNode"):
             name = node.GetName().lower()
             if any(k in name for k in keywords):
-                self.resetRimGlow(node)
+                # Delegate to MaterialManager
+                self.materialManager.resetRimMaterial(node)
 
     def toggleRimGlow(self):
         if self.rimGlowEnabled:
-            self.resetRimGlowOnAnatomy()
+            # Full restore via MaterialManager
+            self.materialManager.restoreAllAnatomyAppearance()
             self.rimGlowEnabled = False
             print("EPCMR: Rim glow disabled.")
         else:
-            self.applyRimGlowToAnatomy()
+            # Full apply via MaterialManager
+            self.materialManager.boostRimGlowOnAllAnatomy()
             self.rimGlowEnabled = True
             print("EPCMR: Rim glow enabled.")
 
@@ -249,21 +355,73 @@ class SceneManager:
         # === CRITICAL FIX FOR SELF-LIT EMISSIVE QUALITY ===
         # Turning ScalarVisibility OFF breaks the VTK internal hardware link that
         # forces scene light tracking. This allows the catheter to become 100% self-lit.
-        dn.SetScalarVisibility(False)
-        dn.SetLighting(False)  # Turn off scene lighting equations completely
+        try:
+            dn.SetScalarVisibility(False)
+        except Exception:
+            pass
+        try:
+            dn.SetLighting(False)  # Turn off scene lighting equations completely
+        except Exception:
+            pass
 
-        # === REAL-TIME CARTO LIGHTING: Pure Emissive Performance ===
-        dn.SetAmbient(1.00)  # 100% Self-illumination creates a brilliant, vibrant neon baseline
-        dn.SetDiffuse(0.00)  # Completely remove directional shadows (prevents dirty/muddy undersides)
-        dn.SetSpecular(0.00)  # Remove harsh reflections to keep the color purely saturated
-        dn.SetPower(1)
+        # === REAL-TIME CARTO LIGHTING: Controlled Emissive Performance ===
+        # Use a controlled emissive baseline rather than full 1.0 to avoid overexposure.
+        # Per-catheter scale allows runtime tuning without changing lights.
+        base_ambient = 0.60  # controlled emissive baseline (was 1.00)
+        base_diffuse = 0.00
+        base_specular = 0.02
+        base_power = 2.0
+
+        # Read optional per-node emissive scale attribute (string) if present
+        try:
+            attr = dn.GetAttribute("EPCMR_CatheterEmissiveScale")
+            scale = float(attr) if attr is not None else 1.0
+        except Exception:
+            scale = 1.0
+
+        # Clamp scale to a safe range
+        try:
+            scale = max(0.4, min(1.6, float(scale)))
+        except Exception:
+            scale = 1.0
+
+        emissive = max(0.0, min(1.0, base_ambient * scale))
+
+        try:
+            dn.SetAmbient(emissive)  # controlled self-illumination
+        except Exception:
+            pass
+        try:
+            dn.SetDiffuse(base_diffuse)
+        except Exception:
+            pass
+        try:
+            dn.SetSpecular(base_specular)
+        except Exception:
+            pass
+        try:
+            dn.SetPower(base_power)
+        except Exception:
+            pass
 
         # === ELECTRODE SEAMS: High-speed edge definition ===
-        dn.SetEdgeVisibility(True)
-        dn.SetEdgeColor(0.10, 0.10, 0.10)  # Sharp dark seams distinctly separate electrode bands
-        dn.SetLineWidth(1.5)  # Crisp, lightweight separation lines
+        try:
+            dn.SetEdgeVisibility(True)
+        except Exception:
+            pass
+        try:
+            dn.SetEdgeColor(0.10, 0.10, 0.10)  # Sharp dark seams distinctly separate electrode bands
+        except Exception:
+            pass
+        try:
+            dn.SetLineWidth(1.5)  # Crisp, lightweight separation lines
+        except Exception:
+            pass
 
-        dn.SetBackfaceCulling(False)
+        try:
+            dn.SetBackfaceCulling(False)
+        except Exception:
+            pass
 
         # === FIXED CARTO VISIBILITY: Force Catheters to Render Over Internal Shadows ===
         # Explicitly configure the backend graphics card mappers across all 3D viewports
@@ -285,10 +443,24 @@ class SceneManager:
                     while p:
                         if hasattr(p, "GetMapper"):
                             m = p.GetMapper()
-                            if m and m.GetInput() == modelNode.GetPolyData():
-                                m.SetLighting(False)  # Force drop lighting calculations on the GPU mapper
-                                m.SetColorModeToDirectScalars()
-                                m.ScalarVisibilityOff()  # Wipe out lighting-enforced scalar array paths
+                            try:
+                                if m and m.GetInput() == modelNode.GetPolyData():
+                                    # Force drop lighting calculations on the GPU mapper
+                                    try:
+                                        m.SetLighting(False)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        m.SetColorModeToDirectScalars()
+                                    except Exception:
+                                        pass
+                                    try:
+                                        m.ScalarVisibilityOff()
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                # Some mapper implementations may raise on GetInput comparison
+                                pass
                         p = props.GetNextProp()
         except Exception:
             pass
@@ -298,6 +470,33 @@ class SceneManager:
                 dn.SetInterpolationToPhong()
             except AttributeError:
                 pass
+
+        # --- ENABLE FXAA FOR SMOOTH EDGES ---
+        try:
+            lm = slicer.app.layoutManager()
+            if lm:
+                for i in range(lm.threeDViewCount):
+                    view = lm.threeDWidget(i).threeDView()
+                    rw = view.renderWindow()
+                    renderer = rw.GetRenderers().GetFirstRenderer()
+
+                    # FXAA ON (works with emissive geometry)
+                    try:
+                        if hasattr(renderer, "UseFXAAOn"):
+                            renderer.UseFXAAOn()
+                        elif hasattr(renderer, "SetUseFXAA"):
+                            renderer.SetUseFXAA(1)
+                    except Exception:
+                        pass
+
+            # Phong interpolation improves curvature before FXAA
+            try:
+                if is_vtk_at_least(9, 3):
+                    dn.SetInterpolationToPhong()
+            except Exception:
+                pass
+        except Exception:
+            pass
 
         # Flush changes instantly to the GPU renderer with zero geometric overhead
         slicer.util.forceRenderAllViews()
@@ -358,6 +557,16 @@ class SceneManager:
             self.sessionBackupPath = os.path.join(self.pNode.lastSavePath, f"backups_{sessionStamp}")
             os.makedirs(self.sessionBackupPath, exist_ok=True)
             logging.info(f"SceneManager: Created session backup folder {self.sessionBackupPath}")
+
+    # ---------------------------------------------------------------------------
+    # IMPORTANT NOTE: Known limitation in Slicer 5.12.x:
+    # - Interactive dragging of Markups control points blocks the Qt event loop.
+    # - During drag, TransformModifiedEvent cannot fire, so catheter motion appears frozen.
+    # - Motion resumes immediately when the mouse is released.
+    # - This is a Slicer core behavior and cannot be overridden from Python.
+    # - A real fix requires a change in Slicer C++ (vtkMRMLMarkupsDisplayableManager)
+    #   to reintroduce a non-modal interaction option.
+    # ---------------------------------------------------------------------------
 
     # ------------------------------------------------------------------
     # Markups observers + backup
@@ -490,10 +699,29 @@ class SceneManager:
                 modelNode.CreateDefaultDisplayNodes()
                 dn = modelNode.GetDisplayNode()
 
+                # ------------------------------------------------------------------
+                # CORE FIX: ensure anatomical polydata has normals
+                # ------------------------------------------------------------------
+                try:
+                    poly = modelNode.GetPolyData()
+                    if poly and poly.GetNumberOfPoints() > 0:
+                        normals = vtk.vtkPolyDataNormals()
+                        normals.SetInputData(poly)
+                        normals.SetFeatureAngle(60.0)
+                        normals.SplittingOff()
+                        normals.ConsistencyOn()
+                        normals.AutoOrientNormalsOn()
+                        normals.ComputePointNormalsOn()  # <- FIXED VERSION
+                        normals.Update()
+                        modelNode.SetAndObservePolyData(normals.GetOutput())
+                except Exception:
+                    pass
+
                 dn.SetScalarVisibility(False)
                 dn.SetColor(*config["color"])
+                # apply centralized material defaults but preserve the intended anatomy opacity
                 dn.SetOpacity(0.6)
-                dn.SetAmbient(0.15)
+                self.applyMaterialDefaultsToNode(modelNode, preserveOpacity=True)
                 dn.SetBackfaceCulling(False)
                 dn.SetVisibility(True)
 
@@ -504,7 +732,61 @@ class SceneManager:
                 if hasattr(self, "normalizeAnatomyAppearance"):
                     self.normalizeAnatomyAppearance(modelNode)
                 if getattr(self, "rimGlowEnabled", False):
-                    self.boostRimGlow(modelNode)
+                    # Delegate rim glow to MaterialManager
+                    self.materialManager.applyRimGlow(modelNode)
+
+                # ------------------------------------------------------------------
+                # *** CRITICAL FIX FOR FACETED VS SMOOTH STARTUP ***
+                #
+                # VTK mappers created BEFORE lighting/material pipeline exists
+                # initialize in FLAT shading mode.
+                #
+                # Reload creates NEW mappers AFTER pipeline exists -> smooth shading.
+                #
+                # Therefore: force mapper REBUILD here, exactly when anatomy appears.
+                # ------------------------------------------------------------------
+                try:
+                    poly = modelNode.GetPolyData()
+                    if poly:
+                        # Force mapper to rebuild by replacing it
+                        mapper = vtk.vtkPolyDataMapper()
+                        mapper.SetInputData(poly)
+
+                        # Smooth shading
+                        try:
+                            mapper.SetInterpolationToPhong()
+                        except Exception:
+                            try:
+                                mapper.SetInterpolation(2)  # 2 = Phong in many VTK builds
+                            except Exception:
+                                pass
+
+                        # Reattach mapper to all renderers that use this model
+                        lm = slicer.app.layoutManager()
+                        if lm:
+                            for i in range(lm.threeDViewCount):
+                                view = lm.threeDWidget(i).threeDView()
+                                renderer = view.renderWindow().GetRenderers().GetFirstRenderer()
+                                props = renderer.GetViewProps()
+                                props.InitTraversal()
+                                p = props.GetNextProp()
+                                while p:
+                                    if hasattr(p, "GetMapper"):
+                                        m = p.GetMapper()
+                                        try:
+                                            if m and m.GetInput() == poly:
+                                                p.SetMapper(mapper)
+                                        except Exception:
+                                            pass
+                                    p = props.GetNextProp()
+                except Exception:
+                    pass
+
+                # Flush to renderer so mapper replacement takes effect immediately
+                try:
+                    slicer.util.forceRenderAllViews()
+                except Exception:
+                    pass
 
                 return True
 
@@ -531,25 +813,43 @@ class SceneManager:
 
         dn.SetBackfaceCulling(False)
 
-        dn.SetAmbient(0.45)
-        dn.SetDiffuse(0.85)
-        dn.SetSpecular(0.10)
-        dn.SetPower(10)
-        dn.SetOpacity(0.60)
+        # PRIOR SETTINGS
+        # dn.SetAmbient(0.45)
+        # dn.SetDiffuse(0.85)
+        # dn.SetSpecular(0.10)
+        # dn.SetPower(10)
+        # dn.SetOpacity(0.60)
+
+        # Apply centralized defaults and then set any anatomy-specific overrides
+        self.applyMaterialDefaultsToNode(modelNode, preserveOpacity=False)
+
+        # keep the normalized anatomy opacity target
+        try:
+            dn.SetOpacity(0.60)
+        except Exception:
+            pass
 
         dn.SetLighting(True)
         dn.SetShading(True)
 
+        # ------------------------------------------------------------------
+        # *** FIX: FORCE PHONG INTERPOLATION (Gouraud caused faceting) ***
+        # ------------------------------------------------------------------
         try:
-            if hasattr(dn, "SetInterpolationToGouraud"):
-                dn.SetInterpolationToGouraud()
-        except AttributeError:
+            if hasattr(dn, "SetInterpolationToPhong"):
+                dn.SetInterpolationToPhong()
+            else:
+                dn.SetInterpolation(2)  # fallback for older VTK
+        except Exception:
             pass
 
         polyData = modelNode.GetPolyData()
         if not polyData:
             return
 
+        # ------------------------------------------------------------------
+        # Normals recomputation (safe + deterministic)
+        # ------------------------------------------------------------------
         normals = vtk.vtkPolyDataNormals()
         normals.SetInputData(polyData)
         normals.SetSplitting(0)
@@ -592,283 +892,37 @@ class SceneManager:
           - For each canonical key in ANATOMY_MAP, gather alias tokens from 'keywords'.
           - Match model nodes by tokenized name or substring match against aliases.
           - If an 'attr' is provided and self.<attr> resolves to a node or node name/ID, that node is included.
-          - Skip nodes already marked with display node attribute "EPCMR.RimGlowApplied" == "true".
-          - Call self.boostRimGlow(node, color=...) if color is provided, otherwise self.boostRimGlow(node).
-          - Return list of affected node names.
+          - Rim glow is ALWAYS re-applied (idempotent), no permanent skip.
+          - Calls self.boostRimGlow(node, color=...) if color is provided, otherwise self.boostRimGlow(node).
+          - Calls self._applyStrongRimOverlay(node) (idempotent overlay).
+          - Returns list of affected node names.
         """
-        import logging
-        import re
+        # Delegate to MaterialManager, preserving behavior
+        return self.materialManager.boostRimGlowOnAllAnatomy()
 
-        logger = getattr(self, "logger", logging)
+    # ------------------------------------------------------------------
+    # Rim-glow reversal and anatomy appearance restoration
+    # ------------------------------------------------------------------
+    def resetRimGlowOnAllAnatomy(self):
+        """
+        Reverse of boostRimGlowOnAllAnatomy:
+          - Removes rim material.
+          - Removes rim overlay.
+          - Clears rim-glow tag.
+          - Uses ANATOMY_MAP as source of truth.
+        """
+        return self.materialManager.resetRimGlowOnAllAnatomy()
 
-        # Build canonical -> alias list mapping from ANATOMY_MAP
-        token_map = {}  # canonical_key -> dict { "aliases": [...], "color": (r,g,b) or None, "attr": attrname or None }
-        anatomy_map = getattr(self, "ANATOMY_MAP", None)
-
-        try:
-            if isinstance(anatomy_map, dict):
-                for canonical, entry in anatomy_map.items():
-                    try:
-                        aliases = []
-                        color = None
-                        attr = None
-                        if isinstance(entry, dict):
-                            aliases = [str(k).strip().lower() for k in entry.get("keywords", []) if k]
-                            color = entry.get("color", None)
-                            attr = entry.get("attr", None)
-                        else:
-                            # entry might be a simple token or list
-                            if isinstance(entry, (list, tuple, set)):
-                                aliases = [str(x).strip().lower() for x in entry if x]
-                            else:
-                                aliases = [str(entry).strip().lower()]
-                        # always include canonical key itself
-                        if canonical:
-                            aliases.insert(0, str(canonical).strip().lower())
-                        # dedupe while preserving order
-                        seen = set()
-                        aliases = [a for a in aliases if a and not (a in seen or seen.add(a))]
-                        token_map[str(canonical)] = {"aliases": aliases, "color": color, "attr": attr}
-                    except Exception:
-                        # skip malformed entry but continue
-                        logger.debug("boostRimGlowOnAllAnatomy: malformed ANATOMY_MAP entry for %s", str(canonical))
-                        continue
-            elif anatomy_map:
-                # treat as iterable of tokens
-                for entry in anatomy_map:
-                    e = str(entry).strip()
-                    if e:
-                        token_map[e] = {"aliases": [e.lower()], "color": None, "attr": None}
-            else:
-                # fallback minimal map
-                token_map = {
-                    "SVC": {"aliases": ["svc"], "color": None, "attr": None},
-                    "IVC": {"aliases": ["ivc"], "color": None, "attr": None},
-                }
-        except Exception:
-            token_map = {
-                "SVC": {"aliases": ["svc"], "color": None, "attr": None},
-                "IVC": {"aliases": ["ivc"], "color": None, "attr": None},
-            }
-
-        # Helper: normalize a model name into searchable tokens
-        def _tokenize_name(name):
-            if not name:
-                return []
-            s = re.sub(r"[^a-z0-9]+", " ", name.lower())
-            tokens = [t for t in s.split() if t]
-            return tokens
-
-        # Helper: resolve attr -> node(s)
-        def _resolve_attr_node(attrname):
-            """
-            Try to resolve an attribute name on self to a node object or node name/ID.
-            Returns a list of vtkMRMLNode objects (possibly empty).
-            """
-            resolved = []
-            if not attrname:
-                return resolved
-            try:
-                if hasattr(self, attrname):
-                    val = getattr(self, attrname)
-                    # If it's already a node
-                    try:
-                        if val and hasattr(val, "IsA") and val.IsA("vtkMRMLNode"):
-                            resolved.append(val)
-                            return resolved
-                    except Exception:
-                        pass
-                    # If it's a string, try to find node by name or id
-                    try:
-                        sval = str(val)
-                        node = slicer.util.getFirstNodeByName(sval)
-                        if node:
-                            resolved.append(node)
-                            return resolved
-                        # try by id
-                        node = slicer.mrmlScene.GetNodeByID(sval)
-                        if node:
-                            resolved.append(node)
-                            return resolved
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            return resolved
-
-        # Collect all model nodes once
-        try:
-            model_nodes = list(slicer.util.getNodesByClass("vtkMRMLModelNode"))
-        except Exception:
-            model_nodes = []
-            try:
-                it = slicer.mrmlScene.GetNodes()
-                it.InitTraversal()
-                for i in range(it.GetNumberOfItems()):
-                    n = it.GetItemAsObject(i)
-                    try:
-                        if n.IsA("vtkMRMLModelNode"):
-                            model_nodes.append(n)
-                    except Exception:
-                        continue
-            except Exception:
-                model_nodes = []
-
-        affected = []
-        applied_nodes = set()  # track node IDs to avoid duplicates
-
-        # First, include nodes referenced by attrs (explicit mapping)
-        for canonical, meta in token_map.items():
-            attrname = meta.get("attr", None)
-            if attrname:
-                try:
-                    resolved = _resolve_attr_node(attrname)
-                    for node in resolved:
-                        try:
-                            nid = node.GetID()
-                            if nid in applied_nodes:
-                                continue
-                            # ensure display node exists
-                            dn = node.GetDisplayNode()
-                            if not dn:
-                                try:
-                                    node.CreateDefaultDisplayNodes()
-                                    dn = node.GetDisplayNode()
-                                except Exception:
-                                    logger.warning(
-                                        "boostRimGlowOnAllAnatomy: could not create display node for %s", node.GetName()
-                                    )
-                                    continue
-                            # skip if already tagged
-                            try:
-                                if hasattr(dn, "GetAttribute"):
-                                    tag = dn.GetAttribute("EPCMR.RimGlowApplied")
-                                    if tag and str(tag).lower() == "true":
-                                        continue
-                            except Exception:
-                                pass
-                            # apply
-                            try:
-                                color = meta.get("color", None)
-                                if color is not None:
-                                    try:
-                                        self.boostRimGlow(node, color=color)
-                                    except TypeError:
-                                        # fallback if boostRimGlow doesn't accept color kwarg
-                                        self.boostRimGlow(node)
-                                else:
-                                    self.boostRimGlow(node)
-                                if hasattr(dn, "SetAttribute"):
-                                    dn.SetAttribute("EPCMR.RimGlowApplied", "true")
-                                affected.append(node.GetName())
-                                applied_nodes.add(nid)
-                                logger.info(
-                                    "boostRimGlowOnAllAnatomy: applied rim-glow to %s via attr %s",
-                                    node.GetName(),
-                                    attrname,
-                                )
-                            except Exception as e:
-                                logger.exception(
-                                    "boostRimGlowOnAllAnatomy: failed to apply rim-glow to %s: %s",
-                                    node.GetName(),
-                                    str(e),
-                                )
-                        except Exception:
-                            continue
-                except Exception:
-                    continue
-
-        # Now match by keywords against model names
-        for node in model_nodes:
-            try:
-                nid = node.GetID()
-                if nid in applied_nodes:
-                    continue
-                name = (node.GetName() or "").strip()
-            except Exception:
-                continue
-            if not name:
-                continue
-            lname = name.lower()
-            name_tokens = _tokenize_name(name)
-
-            matched = False
-            matched_meta = None
-            matched_alias = None
-
-            for canonical, meta in token_map.items():
-                aliases = meta.get("aliases", []) or []
-                for alias in aliases:
-                    if not alias:
-                        continue
-                    # token equality match
-                    if alias in name_tokens:
-                        matched = True
-                        matched_meta = meta
-                        matched_alias = alias
-                        break
-                    # substring fallback
-                    if alias in lname:
-                        matched = True
-                        matched_meta = meta
-                        matched_alias = alias
-                        break
-                if matched:
-                    break
-
-            if not matched:
-                continue
-
-            # Ensure display node exists
-            dn = node.GetDisplayNode()
-            if not dn:
-                try:
-                    node.CreateDefaultDisplayNodes()
-                    dn = node.GetDisplayNode()
-                except Exception:
-                    logger.warning("boostRimGlowOnAllAnatomy: could not create display node for %s", name)
-                    continue
-
-            # Skip if already applied
-            try:
-                if hasattr(dn, "GetAttribute"):
-                    tag = dn.GetAttribute("EPCMR.RimGlowApplied")
-                    if tag and str(tag).lower() == "true":
-                        logger.debug("boostRimGlowOnAllAnatomy: skipping %s (already tagged)", name)
-                        applied_nodes.add(nid)
-                        continue
-            except Exception:
-                pass
-
-            # Apply rim glow
-            try:
-                color = matched_meta.get("color", None) if matched_meta else None
-                if color is not None:
-                    try:
-                        self.boostRimGlow(node, color=color)
-                    except TypeError:
-                        self.boostRimGlow(node)
-                else:
-                    self.boostRimGlow(node)
-                try:
-                    if hasattr(dn, "SetAttribute"):
-                        dn.SetAttribute("EPCMR.RimGlowApplied", "true")
-                except Exception:
-                    pass
-                affected.append(name)
-                applied_nodes.add(nid)
-                logger.info("boostRimGlowOnAllAnatomy: applied rim-glow to %s (matched %s)", name, matched_alias)
-            except Exception as e:
-                logger.exception("boostRimGlowOnAllAnatomy: failed to apply rim-glow to %s: %s", name, str(e))
-                continue
-
-        # Force a render so changes are visible immediately
-        try:
-            slicer.util.forceRenderAllViews()
-        except Exception:
-            pass
-
-        return affected
+    def restoreAllAnatomyAppearance(self):
+        """
+        Full restore:
+          - Removes rim glow material.
+          - Removes rim overlays.
+          - Clears rim tags.
+          - Restores default lighting via lightsManager.
+          - Normalizes anatomy appearance.
+        """
+        return self.materialManager.restoreAllAnatomyAppearance()
 
     # ------------------------------------------------------------------
     # Voltage mapping on RA clone
@@ -902,8 +956,6 @@ class SceneManager:
         dn.SetLighting(True)
         dn.SetShading(True)
         dn.SetBackfaceCulling(False)
-
-        from .SceneManager import is_vtk_at_least  # or import at top if same file
 
         if is_vtk_at_least(9, 3):
             try:
@@ -947,6 +999,18 @@ class SceneManager:
     # -----------------------------------------------------------------------------
 
     def normalizeCatheterAppearance(self, modelNode, emissive=False):
+        """
+        Normalize catheter appearance for consistent lighting and shading.
+
+        NOTE: normalizeCatheterAppearance() is the authoritative styling function
+        for catheter geometry (Abl / Ref), including lighting, shading, normals,
+        FXAA, and interpolation model enforcement.
+
+        This function also defines the shading interpolation model (Gouraud/Phong)
+        used for catheter rendering. Phong is enforced here to ensure smooth
+        curvature shading and consistent visual behavior across GPUs.
+        """
+
         if not modelNode:
             return
 
@@ -972,7 +1036,7 @@ class SceneManager:
         if emissive:
             # --- ADJUSTED TO REDUCE OVERALL GLOW/BRIGHTNESS ---
             dn.SetAmbient(0.40)  # Lowered from 0.78 to blend shadows back in cleanly
-            dn.SetDiffuse(0.60)  # Increased from 0.45 to react nicely to layout lights
+            dn.SetDiffuse(0.32)  # Increased from 0.45 -> 0.60 to react nicely to layout lights
             dn.SetSpecular(0.30)  # Lowered from 0.45 to eliminate harsh pinpoint glare
 
         # Compute explicit surface normal fields to smooth out cylinder edges
@@ -987,6 +1051,37 @@ class SceneManager:
             polyData.ShallowCopy(normals.GetOutput())
             polyData.Modified()
             modelNode.Modified()
+
+        # --- ENABLE FXAA + PHONG FOR SMOOTH EDGES ---
+        try:
+            lm = slicer.app.layoutManager()
+            if lm:
+                for i in range(lm.threeDViewCount):
+                    view = lm.threeDWidget(i).threeDView()
+                    rw = view.renderWindow()
+                    renderer = rw.GetRenderers().GetFirstRenderer()
+
+                    # FXAA ON (works with emissive geometry)
+                    try:
+                        if hasattr(renderer, "UseFXAAOn"):
+                            renderer.UseFXAAOn()
+                        elif hasattr(renderer, "SetUseFXAA"):
+                            renderer.SetUseFXAA(1)
+                    except Exception:
+                        pass
+
+            # Phong interpolation improves curvature before FXAA
+            try:
+                # --- AUTHORITATIVE PHONG ENFORCEMENT FOR CATHETERS ---
+                if hasattr(dn, "SetInterpolationToPhong"):
+                    dn.SetInterpolationToPhong()
+                else:
+                    dn.SetInterpolation(2)  # fallback for older VTK
+            except Exception:
+                pass
+
+        except Exception:
+            pass
 
     def normalizeAllCathetersEmissive(self):
         modelNodes = slicer.util.getNodesByClass("vtkMRMLModelNode")
@@ -1233,6 +1328,7 @@ class SceneManager:
         polyData.ShallowCopy(normals.GetOutput())
         polyData.Modified()
         raCloneNode.Modified()
+        # Rim shader hook remains here; MaterialManager owns rim glow itself
         self._ensureCARTORimShader(dn)
 
     # ------------------------------------------------------------------
@@ -1698,6 +1794,40 @@ class SceneManager:
           - Catheter mappers and display properties are reverted to baseline.
         """
         # --------------------------------------------------------------
+        # PRELUDE: Ensure renderer GL/lighting state is healthy before teardown
+        # --------------------------------------------------------------
+        # Run a non-destructive renderer repair once per SceneManager instance.
+        # This prevents attempting to remove or reconfigure lights when the
+        # renderer is in a corrupted GL state (common after sandbox/module reloads).
+
+        # Ensure renderer is healthy before scene reset/setup (deferred if needed)
+        try:
+            from EPCMRLib.Utilities.RendererRepairManager import RendererRepairManager
+            from PyQt5 import QtCore
+
+            def _run_or_defer_repair():
+                lm = slicer.app.layoutManager()
+                if lm:
+                    try:
+                        RendererRepairManager().repairAllRenderers()
+                    except Exception:
+                        pass
+                else:
+                    # layoutManager not ready yet; schedule a short deferred attempt
+                    try:
+                        QtCore.QTimer.singleShot(250, lambda: RendererRepairManager().repairAllRenderers())
+                    except Exception:
+                        # final fallback: best-effort immediate call
+                        try:
+                            RendererRepairManager().repairAllRenderers()
+                        except Exception:
+                            pass
+
+            _run_or_defer_repair()
+        except Exception:
+            pass
+
+        # --------------------------------------------------------------
         # 0) Revert catheter material properties and mapper lighting
         #    Ensures code parameter modifications are applied cleanly on module reloads.
         # --------------------------------------------------------------
@@ -1709,9 +1839,18 @@ class SceneManager:
                     dn = node.GetDisplayNode()
                     if dn:
                         # Reset display parameters closer to standard default baselines
-                        dn.SetAmbient(0.1)
-                        dn.SetDiffuse(0.9)
-                        dn.SetSpecular(0.2)
+                        try:
+                            dn.SetAmbient(0.1)
+                        except Exception:
+                            pass
+                        try:
+                            dn.SetDiffuse(0.9)
+                        except Exception:
+                            pass
+                        try:
+                            dn.SetSpecular(0.2)
+                        except Exception:
+                            pass
 
                     # Look up mapper to re-enable lighting so standard shaders apply
                     lm = slicer.app.layoutManager()
@@ -1728,11 +1867,21 @@ class SceneManager:
                                     while p:
                                         if hasattr(p, "GetMapper"):
                                             m = p.GetMapper()
-                                            if m and m.GetInput() == node.GetPolyData():
-                                                # Restore default VTK cell-shading pipelines
-                                                m.SetLighting(True)
-                                                m.ScalarVisibilityOn()
-                                                break
+                                            try:
+                                                if m and m.GetInput() == node.GetPolyData():
+                                                    # Restore default VTK cell-shading pipelines
+                                                    try:
+                                                        m.SetLighting(True)
+                                                    except Exception:
+                                                        pass
+                                                    try:
+                                                        m.ScalarVisibilityOn()
+                                                    except Exception:
+                                                        pass
+                                                    break
+                                            except Exception:
+                                                # Some mapper implementations may raise on GetInput comparison
+                                                pass
                                         p = props.GetNextProp()
         except Exception:
             # Reverting material pipelines must never stall cleanup
@@ -1791,7 +1940,27 @@ class SceneManager:
         try:
             # Delegate to LightsManager if available; ensures deterministic teardown
             if hasattr(self, "lightsManager") and self.lightsManager:
-                self.lightsManager.cleanup()
+                try:
+                    # Attempt a lightweight renderer repair immediately before lights cleanup
+                    # to avoid removing lights from a corrupted renderer state.
+                    if not getattr(self, "_lightsCleanupRepairAttempted", False):
+                        try:
+                            from EPCMRLib.Utilities.RendererRepairManager import RendererRepairManager
+
+                            try:
+                                RendererRepairManager().repairAllRenderers()
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+                        self._lightsCleanupRepairAttempted = True
+                except Exception:
+                    pass
+                try:
+                    self.lightsManager.cleanup()
+                except Exception:
+                    # Lighting cleanup must never break teardown
+                    pass
         except Exception:
             # Lighting cleanup must never break teardown
             pass
@@ -1812,4 +1981,90 @@ class SceneManager:
                         pass
         except Exception:
             # Node teardown must never crash the main cleanup stack
+            pass
+
+        # --------------------------------------------------------------
+        # 6) Re-apply material defaults to visible anatomy to ensure consistent lighting after cleanup
+        # --------------------------------------------------------------
+        try:
+            # If SceneManager provides a centralized helper, use it; otherwise apply safe defaults inline.
+            for node in slicer.util.getNodesByClass("vtkMRMLModelNode"):
+                try:
+                    name = (node.GetName() or "").lower()
+                except Exception:
+                    name = ""
+                # Only re-apply to recognized anatomy nodes to avoid touching unrelated models
+                try:
+                    anatomy_keywords = []
+                    for entry in getattr(self, "ANATOMY_MAP", {}).values():
+                        anatomy_keywords.extend([k.lower() for k in entry.get("keywords", [])])
+                except Exception:
+                    anatomy_keywords = []
+
+                if any(k in name for k in anatomy_keywords):
+                    try:
+                        # Prefer SceneManager helper if available
+                        if hasattr(self, "applyMaterialDefaultsToNode"):
+                            try:
+                                # preserve existing opacity where anatomy intentionally set it
+                                self.applyMaterialDefaultsToNode(node, preserveOpacity=True)
+                            except Exception:
+                                # fallback to inline defaults if helper fails
+                                dn = node.GetDisplayNode()
+                                if dn:
+                                    try:
+                                        dn.SetAmbient(0.02)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        dn.SetDiffuse(0.95)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        dn.SetSpecular(0.03)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        dn.SetPower(10.0)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        dn.SetScalarVisibility(0)
+                                    except Exception:
+                                        pass
+                        else:
+                            dn = node.GetDisplayNode()
+                            if dn:
+                                try:
+                                    dn.SetAmbient(0.02)
+                                except Exception:
+                                    pass
+                                try:
+                                    dn.SetDiffuse(0.95)
+                                except Exception:
+                                    pass
+                                try:
+                                    dn.SetSpecular(0.03)
+                                except Exception:
+                                    pass
+                                try:
+                                    dn.SetPower(10.0)
+                                except Exception:
+                                    pass
+                                try:
+                                    dn.SetScalarVisibility(0)
+                                except Exception:
+                                    pass
+                    except Exception:
+                        # Per-node material application must not break cleanup
+                        pass
+        except Exception:
+            pass
+
+        # --------------------------------------------------------------
+        # 7) Final render pass to ensure scene is consistent after cleanup
+        # --------------------------------------------------------------
+        try:
+            slicer.util.forceRenderAllViews()
+        except Exception:
             pass

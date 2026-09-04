@@ -131,6 +131,20 @@ class GeometryInterpolator:
             poly_copy = vtk.vtkPolyData()
             poly_copy.DeepCopy(interp.GetOutput())
 
+            # Ensure normals on clone polydata (critical for smooth shading)
+            try:
+                normals = vtk.vtkPolyDataNormals()
+                normals.SetInputData(poly_copy)
+                normals.SetFeatureAngle(60.0)
+                normals.SplittingOff()
+                normals.ConsistencyOn()
+                normals.AutoOrientNormalsOn()
+                normals.ComputePointNormalsOn()
+                normals.Update()
+                poly_copy.DeepCopy(normals.GetOutput())
+            except Exception:
+                pass
+
             pd = poly_copy.GetPointData()
             arr_final = pd.GetArray(scalar_name) if pd else None
             if not arr_final:
@@ -193,6 +207,21 @@ class GeometryInterpolator:
         # 5) Push into clone
         polyCopy = vtk.vtkPolyData()
         polyCopy.DeepCopy(smoothed_poly)
+
+        # Ensure normals on clone polydata (critical for smooth shading)
+        try:
+            normals_v = vtk.vtkPolyDataNormals()
+            normals_v.SetInputData(polyCopy)
+            normals_v.SetFeatureAngle(60.0)
+            normals_v.SplittingOff()
+            normals_v.ConsistencyOn()
+            normals_v.AutoOrientNormalsOn()
+            normals_v.ComputePointNormalsOn()
+            normals_v.Update()
+            polyCopy.DeepCopy(normals_v.GetOutput())
+        except Exception:
+            pass
+
         self.clonedRA.SetAndObservePolyData(polyCopy)
 
         # 6) Voltage window from pNode

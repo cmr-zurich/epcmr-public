@@ -65,10 +65,12 @@ The technical implementation of MRTC on the MR system is not part of the Toolkit
 
 - **3D Slicer** 5.7 or newer (Python 3.12 environment).
 - **SlicerOpenIGTLink** Extension installed (Extension Manager)
+- **Sandbox** Extension installed (optional, for advanced lighting controls)
 - **`pyigtl`** — auto-installed into Slicer's Python on first launch (the module prompts
   and installs via `pip` if missing).
 - For the `mrtc_CathTrack` bridge (standalone Python): `protobuf`, `crc32c`.
 - Real-time tracking requires the [MRTC system](docs/MRTC_briefly_explained.md) to be installed on the MR system. MRTC is a research functionality and requires a research contract. Please contact your local Philips Clinical Scientist for support.
+
 
 ---
 
