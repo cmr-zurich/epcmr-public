@@ -97,12 +97,6 @@ class SceneManager:
         self.rimGlowEnabled = False
 
         # ---------------------------------------------------------
-        # Rim glow is now handled by MaterialManager (idempotent)
-        # SceneManager only orchestrates which nodes receive rim glow.
-        self.materialManager = MaterialManager(self)
-        self.rimGlowEnabled = False
-
-        # ---------------------------------------------------------
         # Material defaults (centralized)
         # ---------------------------------------------------------
         # These defaults favor high diffuse, low ambient, modest specular,
