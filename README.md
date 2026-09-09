@@ -25,7 +25,7 @@ electrophysiology (EP) cardiac-MR workflows into Slicer. It combines pre-procedu
 anatomy, interactive angulation, and **live MR-tracked catheter visualization** streamed
 over [OpenIGTLink](http://openigtlink.org/).
 
-<img src="./docs/images/EPCMR_Teaser.gif" width="65%" height="65%"/>
+<img src="./docs/images/EPCMR_Teaser2.gif" width="80%" height="80%"/>
 
 ### Features
 
