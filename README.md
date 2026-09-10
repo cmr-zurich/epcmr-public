@@ -24,8 +24,8 @@ anatomy, interactive angulation, and **live MR-tracked catheter visualization** 
 over [OpenIGTLink](http://openigtlink.org/).
 
 
-<video src="https://github.com/user-attachments/assets/50ed9e7d-a24c-4a48-ac50-f9760d697f82"
-       width="10%" 
+<video src="https://github.com/user-attachments/assets/084e7ce3-e75a-4c6c-9117-3fb0bf443b9a"
+       width="40%" 
        controls 
        muted 
        playsinline>
