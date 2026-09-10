@@ -25,7 +25,11 @@ electrophysiology (EP) cardiac-MR workflows into Slicer. It combines pre-procedu
 anatomy, interactive angulation, and **live MR-tracked catheter visualization** streamed
 over [OpenIGTLink](http://openigtlink.org/).
 
-<img src="./docs/images/EPCMR_Teaser2.gif" width="100%" height="100%"/>
+
+<video autoplay loop muted playsinline width="65%">
+  <source src="./docs/images/EPCMR_Teaser.mp4" type="video/mp4">
+</video>
+
 
 ### Features
 
@@ -38,7 +42,7 @@ over [OpenIGTLink](http://openigtlink.org/).
 
 ### Architecture at a glance
 
-``` 
+```
 MR scanner ──(MRTC protocol)──▶  mrtc_CathTrack  ──(OpenIGTLink / pyigtl)──▶  EPCMR (Slicer)
                                   bridge & tracker                            visualization
 ```
@@ -57,7 +61,7 @@ MR scanner ──(MRTC protocol)──▶  mrtc_CathTrack  ──(OpenIGTLink / 
 - **`EPCMR` module** — connects as an OpenIGTLink client, renders catheters, and runs the
   RA-Flutter / PVC / FreeAngulator workflows.
 
-The technical implementation of MRTC on the MR system is not part of the Toolkit, see **Requirements**. 
+The technical implementation of MRTC on the MR system is not part of the Toolkit, see **Requirements**.
 
 ---
 
