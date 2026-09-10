@@ -25,7 +25,7 @@ over [OpenIGTLink](http://openigtlink.org/).
 
 
 <video src="https://github.com/user-attachments/assets/50ed9e7d-a24c-4a48-ac50-f9760d697f82"
-       width="40%" 
+       width="10%" 
        controls 
        muted 
        playsinline>
