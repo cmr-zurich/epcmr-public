@@ -24,9 +24,10 @@ anatomy, interactive angulation, and **live MR-tracked catheter visualization** 
 over [OpenIGTLink](http://openigtlink.org/).
 
 
-| Watch EPCMR Video |
-| :---: |
-| <video src="https://github.com" controls width="300"></video> <br> <sub>(Click to play full screen if needed)</sub> |
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/03639dab-9913-4daf-a788-93663c8e9878" width="40%" controls></video>
+</p>
+
 
 ### Features
 
