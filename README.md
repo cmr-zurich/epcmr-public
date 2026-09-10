@@ -1,5 +1,9 @@
 
 
+https://github.com/user-attachments/assets/ebb92fd8-6ff9-4b33-95a2-cee0130499fe
+
+
+
 <div align="center">
 <img src="./Resources/Icons/EPCMR_128.png" alt="EPCMR logo" width="128" />
 <h1> EPCMR — Electrophysiology CMR Toolkit</h1>
@@ -26,9 +30,7 @@ anatomy, interactive angulation, and **live MR-tracked catheter visualization** 
 over [OpenIGTLink](http://openigtlink.org/).
 
 
-<video autoplay loop muted playsinline width="65%">
-  <source src="./docs/images/EPCMR_Teaser.mp4" type="video/mp4">
-</video>
+<video src="https://github.com/user-attachments/assets/03639dab-9913-4daf-a788-93663c8e9878" width="65%" controls></video>
 
 
 ### Features
