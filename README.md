@@ -32,8 +32,6 @@ over [OpenIGTLink](http://openigtlink.org/).
        playsinline>
 </video>
 
-
-
 ### Features
 
 - **RA Flutter** — right-atrial flutter mapping and ablation support.
